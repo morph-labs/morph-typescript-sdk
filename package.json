@@ -1,0 +1,26 @@
+{
+  "name": "morphcloud",
+  "version": "0.0.1",
+  "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
+  "scripts": {
+    "build": "tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/morph-labs/morph-typescript-sdk.git"
+  },
+  "author": "Morph",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/morph-labs/morph-typescript-sdk/issues"
+  },
+  "homepage": "https://github.com/morph-labs/morph-typescript-sdk#readme",
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ssh2": "^1.15.1",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "node-ssh": "^13.2.0"
+  }
+}
