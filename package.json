@@ -3,7 +3,8 @@
   "version": "0.0.1",
   "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "test": "npm run build"
   },
   "repository": {
     "type": "git",
