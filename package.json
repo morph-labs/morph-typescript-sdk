@@ -2,6 +2,7 @@
   "name": "morphcloud",
   "version": "0.0.1",
   "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
+  "license": "Apache-2.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
