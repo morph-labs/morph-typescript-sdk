@@ -2,9 +2,23 @@
   "name": "morphcloud",
   "version": "0.0.1",
   "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build"
+    "prepare": "npm run build",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean"
   },
   "repository": {
     "type": "git",
