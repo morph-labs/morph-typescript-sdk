@@ -257,7 +257,7 @@ class Instance {
     }
 }
 
-export class MorphCloudClient {
+class MorphCloudClient {
     readonly baseUrl: string;
     readonly apiKey: string;
 
@@ -366,3 +366,15 @@ export class MorphCloudClient {
         }
     };
 }
+
+export { MorphCloudClient };
+export { InstanceStatus, SnapshotStatus };
+export type {
+  MorphCloudClientOptions,
+  ResourceSpec,
+  SnapshotRefs,
+  InstanceHttpService,
+  InstanceNetworking,
+  InstanceRefs,
+  InstanceExecResponse,
+};
