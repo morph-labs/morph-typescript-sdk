@@ -105,6 +105,7 @@ interface SyncOptions {
   delete?: boolean;
   dryRun?: boolean;
   verbose?: boolean;
+  respectGitignore?: boolean;
 }
 
 interface SFTPError extends Error {
@@ -289,6 +290,31 @@ class Instance {
       }
     };
 
+    // Add at the beginning of the method
+    const ignore = require("ignore");
+    const fs = require("fs").promises;
+    const path = require("path");
+
+    const getGitignore = async (dirPath: string): Promise<any> => {
+      try {
+        const gitignorePath = path.join(dirPath, ".gitignore");
+        const content = await fs.readFile(gitignorePath, "utf8");
+        return ignore().add(content);
+      } catch (error) {
+        return null;
+      }
+    };
+
+    const shouldIgnore = (
+      filePath: string,
+      baseDir: string,
+      ignoreRule: any,
+    ): boolean => {
+      if (!ignoreRule) return false;
+      const relativePath = path.relative(baseDir, filePath);
+      return ignoreRule.ignores(relativePath);
+    };
+
     interface FileInfo {
       size: number;
       mtime: number;
@@ -436,18 +462,31 @@ class Instance {
         return files;
       };
 
+      // Update getLocalFiles to use gitignore
       const getLocalFiles = async (
         dir: string,
       ): Promise<Map<string, FileInfo>> => {
         const files = new Map<string, FileInfo>();
-        const { promises: fs } = require("fs");
-        const path = require("path");
+
+        const ignoreRule = options.respectGitignore
+          ? await getGitignore(dir)
+          : null;
 
         const readDir = async (currentDir: string) => {
           try {
             const items = await fs.readdir(currentDir, { withFileTypes: true });
             for (const item of items) {
               const fullPath = path.join(currentDir, item.name);
+
+              // Skip if path matches gitignore patterns
+              if (
+                options.respectGitignore &&
+                shouldIgnore(fullPath, dir, ignoreRule)
+              ) {
+                log("debug", `Ignoring file (gitignore): ${fullPath}`);
+                continue;
+              }
+
               if (item.isDirectory()) {
                 await readDir(fullPath);
               } else {
