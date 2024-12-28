@@ -1,6 +1,6 @@
 {
   "name": "morphcloud",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -36,6 +36,7 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "ignore": "^7.0.0",
     "node-ssh": "^13.2.0"
   }
 }

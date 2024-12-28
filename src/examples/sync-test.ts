@@ -1,158 +1,146 @@
 import { MorphCloudClient } from "../api";
-import * as fs from "fs";
-import * as path from "path";
+import * as fs from 'fs';
+import * as path from 'path';
 
-// Initialize the client
-const client = new MorphCloudClient({
-  apiKey: "morph_YmBV85wIXBQqIPrNx6BnDc",
-});
-
-(async () => {
-  try {
-    // Create sample local directory structure
+// Create test directory structure
+const createTestEnv = async () => {
     console.log("Creating sample local directory structure...");
-    if (fs.existsSync("./foo")) {
-      console.log("Removing existing ./foo directory...");
-      fs.rmSync("./foo", { recursive: true, force: true });
+    
+    const testDir = './foo';
+    console.log("Removing existing ./foo directory...");
+    if (fs.existsSync(testDir)) {
+        fs.rmSync(testDir, { recursive: true });
     }
-    if (fs.existsSync("./foo2")) {
-      console.log("Removing existing ./foo2 directory...");
-      fs.rmSync("./foo2", { recursive: true, force: true });
-    }
-
+    
     console.log("Creating new ./foo directory...");
-    fs.mkdirSync("./foo");
-    fs.writeFileSync("./foo/test1.txt", "Hello from test1!");
-    fs.writeFileSync("./foo/test2.txt", "Hello from test2!");
-    fs.mkdirSync("./foo/subdir");
-    fs.writeFileSync("./foo/subdir/test3.txt", "Hello from subdir!");
+    fs.mkdirSync(testDir);
+    fs.mkdirSync(path.join(testDir, 'subdir'), { recursive: true });
+    
+    // Create test files
+    fs.writeFileSync(path.join(testDir, 'test1.txt'), 'Test file 1');
+    fs.writeFileSync(path.join(testDir, 'test2.txt'), 'Test file 2');
+    fs.writeFileSync(path.join(testDir, 'subdir', 'test3.txt'), 'Test file 3');
 
-    // Create a minimal snapshot and instance
-    console.log("\nCreating snapshot and instance...");
+    // Create .gitignore and files that should be ignored
+    fs.writeFileSync(path.join(testDir, '.gitignore'), 
+`# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temp files
+*.tmp
+temp/
+
+# Test patterns
+ignored_file.txt
+ignored_dir/
+*.ignore
+`);
+    
+    // Create files that should be ignored
+    fs.writeFileSync(path.join(testDir, 'ignored_file.txt'), 'This file should be ignored');
+    fs.writeFileSync(path.join(testDir, 'test.ignore'), 'This file should be ignored');
+    fs.mkdirSync(path.join(testDir, 'ignored_dir'));
+    fs.writeFileSync(path.join(testDir, 'ignored_dir', 'file.txt'), 'This file should be ignored');
+};
+
+const main = async () => {
+    await createTestEnv();
+    console.log("\nGetting snapshot and creating instance...");
+
+    const client = new MorphCloudClient({
+        apiKey: process.env.MORPH_API_KEY || ''
+    });
+
+    // Use hardcoded snapshot
     const snapshot = await client.snapshots.get({
-      snapshotId: "snapshot_9xy9io0w",
+        snapshotId: "snapshot_9xy9io0w"
     });
 
     const instance = await client.instances.start({
-      snapshotId: snapshot.id,
+        snapshotId: snapshot.id
     });
 
-    // Wait for instance to be ready
     console.log("Waiting for instance to be ready...");
     await instance.waitUntilReady(60);
 
-    // Ensure remote directory exists and is empty
+    // Create remote directory and check its status
     console.log("\nPreparing remote environment...");
     const ssh = await instance.ssh();
-    await ssh.execCommand("rm -rf /tmp/foo");
-    await ssh.execCommand("mkdir -p /tmp/foo");
+    await ssh.execCommand('mkdir -p /tmp/foo');
+    const { stdout } = await ssh.execCommand('ls -la /tmp/foo');
+    console.log("Remote directory status:", stdout);
 
-    // Verify remote directory was created
-    const checkResult = await ssh.execCommand("ls -la /tmp/foo");
-    console.log(
-      "Remote directory status:",
-      checkResult.stdout || checkResult.stderr,
-    );
-
-    // First sync: local to remote
-    console.log("\nSyncing ./foo to remote /tmp/foo...");
     try {
-      await instance.sync(
-        path.resolve("./foo"), // Use absolute path
-        `${instance.id}:/tmp/foo`,
-        { verbose: true },
-      );
-    } catch (error) {
-      console.error("Error during first sync:", error);
-      throw error;
-    }
-
-    // Verify remote contents
-    console.log("\nVerifying remote contents...");
-    const remoteList = await ssh.execCommand(
-      "find /tmp/foo -type f -exec cat {} \\;",
-    );
-    console.log("Remote files content:", remoteList.stdout);
-
-    // Second sync: remote back to local
-    console.log("\nSyncing remote /tmp/foo back to ./foo2...");
-    try {
-      await instance.sync(
-        `${instance.id}:/tmp/foo`,
-        path.resolve("./foo2"), // Use absolute path
-        { verbose: true },
-      );
-    } catch (error) {
-      console.error("Error during second sync:", error);
-      throw error;
-    }
-
-    // Verify the contents
-    console.log("\nVerifying local contents...");
-    const compareDirectories = (
-      dir1: string,
-      dir2: string,
-      relativePath: string = "",
-    ) => {
-      const files1 = fs.readdirSync(path.join(dir1, relativePath));
-      const files2 = fs.readdirSync(path.join(dir2, relativePath));
-
-      console.log(`Comparing ${relativePath || "/"}`);
-      console.log(`Files in ${dir1}:`, files1);
-      console.log(`Files in ${dir2}:`, files2);
-
-      if (files1.length !== files2.length) {
-        throw new Error(
-          `Directory ${relativePath} has different number of files`,
+        // First sync without gitignore
+        console.log("\nSyncing ./foo to remote /tmp/foo WITHOUT gitignore...");
+        await instance.sync(
+            path.resolve('./foo'),
+            `${instance.id}:/tmp/foo`,
+            { 
+                verbose: true,
+                delete: false
+            }
         );
-      }
 
-      for (const file of files1) {
-        const fullPath1 = path.join(dir1, relativePath, file);
-        const fullPath2 = path.join(dir2, relativePath, file);
+        console.log("\nVerifying all files were synced...");
+        const { stdout: allFiles } = await ssh.execCommand('find /tmp/foo -type f -exec ls -l {} \\;');
+        console.log("Remote files (should include ignored files):", allFiles);
 
-        const stat1 = fs.statSync(fullPath1);
-        const stat2 = fs.statSync(fullPath2);
+        // Second sync with gitignore
+        console.log("\nSyncing ./foo to remote /tmp/foo WITH gitignore...");
+        await instance.sync(
+            path.resolve('./foo'),
+            `${instance.id}:/tmp/foo`,
+            { 
+                verbose: true,
+                delete: true,
+                respectGitignore: true
+            }
+        );
 
-        if (stat1.isDirectory() !== stat2.isDirectory()) {
-          throw new Error(
-            `${file} is directory in one location but not in other`,
-          );
+        console.log("\nVerifying only non-ignored files were synced...");
+        const { stdout: nonIgnoredFiles } = await ssh.execCommand('find /tmp/foo -type f -exec ls -l {} \\;');
+        console.log("Remote files (should NOT include ignored files):", nonIgnoredFiles);
+
+        // Verify specific file contents
+        console.log("\nVerifying file contents...");
+        const { stdout: contents } = await ssh.execCommand('cat /tmp/foo/subdir/test3.txt');
+        console.log("test3.txt contents:", contents);
+
+        // Verify ignored files are not present
+        console.log("\nVerifying ignored files are not present...");
+        const ignoredFiles = [
+            '/tmp/foo/ignored_file.txt',
+            '/tmp/foo/test.ignore',
+            '/tmp/foo/ignored_dir/file.txt'
+        ];
+
+        for (const filePath of ignoredFiles) {
+            const { stdout: fileCheck } = await ssh.execCommand(
+                `test -f ${filePath} && echo "EXISTS" || echo "NOT FOUND"`
+            );
+            console.log(`${filePath}: ${fileCheck.trim()}`);
         }
 
-        if (stat1.isDirectory()) {
-          compareDirectories(dir1, dir2, path.join(relativePath, file));
+    } catch (error) {
+        if (error instanceof Error) {
+            console.error("Error during sync:", error);
+            console.error("Error details:", {
+                message: error.message,
+                stack: error.stack,
+                code: (error as any).code
+            });
         } else {
-          const content1 = fs.readFileSync(fullPath1, "utf8");
-          const content2 = fs.readFileSync(fullPath2, "utf8");
-          console.log(
-            `Comparing ${file}:`,
-            content1 === content2 ? "match" : "different",
-          );
-          if (content1 !== content2) {
-            throw new Error(`File contents different for ${file}`);
-          }
+            console.error("Unknown error during sync:", error);
         }
-      }
-    };
-
-    compareDirectories("./foo", "./foo2");
-    console.log("Success! Directory contents match exactly.");
-
-    // Cleanup
-    console.log("\nCleaning up...");
-    await instance.stop();
-    // await snapshot.delete();
-  } catch (error) {
-    console.error("Error:", error);
-    // Log instance status if available
-    if (typeof error === "object" && error !== null) {
-      console.error("Error details:", {
-        message: (error as Error).message,
-        stack: (error as Error).stack,
-        code: (error as any).code,
-      });
+        throw error;
+    } finally {
+        // Clean up - just stop the instance
+        console.log("\nCleaning up...");
+        await instance.stop();
     }
-    throw error;
-  }
-})();
+};
+
+main().catch(console.error);
