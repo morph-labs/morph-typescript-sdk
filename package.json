@@ -2,7 +2,8 @@
   "name": "morphcloud",
   "version": "0.0.5",
   "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
-  "main": "dist/index.js",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
@@ -10,16 +11,27 @@
   ],
   "exports": {
     ".": {
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
     "prepare": "npm run build",
     "clean": "rm -rf dist",
-    "prebuild": "npm run clean"
+    "prebuild": "npm run clean",
+    "test:cjs": "node test/test-cjs.cjs",
+    "test:esm": "node test/test-esm.js",
+    "test:bun": "bun test/test-bun.ts",
+    "test:bunts": "bun test/test-bunts.ts"
   },
+  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/morph-labs/morph-typescript-sdk.git"
@@ -33,7 +45,8 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/ssh2": "^1.15.1",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "tsup": "^8.0.0"
   },
   "dependencies": {
     "ignore": "^7.0.0",
