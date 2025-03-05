@@ -78,7 +78,7 @@ interface ImageListOptions {}
 
 interface SnapshotListOptions {
   digest?: string;
-  metadata?: Map<string, string>;
+  metadata?: Record<string, string> | Map<string, string>;
 }
 
 interface SnapshotCreateOptions {
@@ -87,7 +87,7 @@ interface SnapshotCreateOptions {
   memory?: number;
   diskSize?: number;
   digest?: string;
-  metadata?: Map<string, string>;
+  metadata?: Record<string, string> | Map<string, string>;
 }
 
 interface SnapshotGetOptions {
@@ -259,7 +259,9 @@ class Snapshot {
     ...args: T
   ): Promise<Snapshot> {
     // 1) Compute the new chain hash identifier from the parent's hash and effect details
-    const parentChainHash = this.metadata?.get('chain_hash') || this.id;
+    // Get chain_hash from metadata object or use ID
+    const metadata = this.metadata || new Map<string, string>();
+    const parentChainHash = metadata.get('chain_hash') || this.id;
     const effectIdentifier = fn.name + JSON.stringify(args);
 
     console.log(`Effect function: ${fn.name}`);
@@ -268,11 +270,14 @@ class Snapshot {
     const newChainHash = Snapshot.computeChainHash(parentChainHash, effectIdentifier);
 
     // 2) Check for an existing snapshot with this chain hash
-    const metadata = new Map<string, string>();
-    metadata.set('chain_hash', newChainHash);
+    // Create metadata object for the API call - important: use plain object here, not Map
+    const metadataObj: Record<string, string> = {
+      'chain_hash': newChainHash
+    };
 
+    // Pass plain object to list
     const candidates = await this.client.snapshots.list({
-      metadata
+      metadata: metadataObj
     });
 
     if (candidates.length > 0) {
@@ -290,7 +295,8 @@ class Snapshot {
       const newSnapshot = await instance.snapshot();
 
       // 4) Tag the newly created snapshot with the computed chain hash
-      await newSnapshot.setMetadata(new Map([['chain_hash', newChainHash]]));
+      // Important: use plain object for the API call
+      await newSnapshot.setMetadata({ 'chain_hash': newChainHash });
 
       return newSnapshot;
     } finally {
@@ -319,15 +325,15 @@ class Snapshot {
 
   /**
    * Sets metadata for the snapshot
-   * @param metadata Map of metadata key-value pairs to set
+   * @param metadata Metadata key-value pairs to set
    */
-  async setMetadata(metadata: Map<string, string>): Promise<void> {
-    // Convert the Map to a plain object for the API
-    const metadataObj: Record<string, string> = {};
-    metadata.forEach((value, key) => {
-      metadataObj[key] = value;
-    });
+  async setMetadata(metadata: Record<string, string> | Map<string, string>): Promise<void> {
+    // Convert to plain object if it's a Map
+    const metadataObj: Record<string, string> = metadata instanceof Map 
+      ? Object.fromEntries(metadata.entries())
+      : metadata;
 
+    // Send the update to the API
     await this.client.POST(`/snapshot/${this.id}/metadata`, {}, metadataObj);
 
     // Update the local metadata
@@ -335,7 +341,8 @@ class Snapshot {
       this.metadata = new Map<string, string>();
     }
 
-    metadata.forEach((value, key) => {
+    // Update the local Map with new values
+    Object.entries(metadataObj).forEach(([key, value]) => {
       this.metadata?.set(key, value);
     });
   }
@@ -1044,8 +1051,13 @@ class MorphCloudClient {
       }
 
       // Add metadata in stripe style format: metadata[key]=value
-      if (metadata && typeof metadata === 'object') {
-        Object.entries(metadata).forEach(([key, value]) => {
+      if (metadata) {
+        // Convert Map to Record if needed
+        const metadataObj = metadata instanceof Map 
+          ? Object.fromEntries(metadata.entries()) 
+          : metadata;
+
+        Object.entries(metadataObj).forEach(([key, value]) => {
           queryParams.append(`metadata[${key}]`, String(value));
         });
       }
@@ -1058,6 +1070,12 @@ class MorphCloudClient {
     },
 
     create: async (options: SnapshotCreateOptions = {}): Promise<Snapshot> => {
+      // Convert Map to object if needed
+      let metadata = options.metadata;
+      if (metadata instanceof Map) {
+        metadata = Object.fromEntries(metadata.entries());
+      }
+
       const data = {
         image_id: options.imageId,
         vcpus: options.vcpus,
@@ -1065,7 +1083,7 @@ class MorphCloudClient {
         disk_size: options.diskSize,
         digest: options.digest,
         readiness_check: { type: "timeout", timeout: 10.0 },
-        metadata: options.metadata || {},
+        metadata: metadata || {},
       };
       const response = await this.POST("/snapshot", {}, data);
       return new Snapshot(response, this);
