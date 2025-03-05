@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
 
@@ -147,7 +149,7 @@ class Snapshot {
   readonly spec: ResourceSpec;
   readonly refs: SnapshotRefs;
   readonly digest?: string;
-  readonly metadata?: Map<string, string>;
+  metadata?: Map<string, string>;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -164,12 +166,178 @@ class Snapshot {
       imageId: data.refs.image_id,
     };
     this.digest = data.digest;
-    this.metadata = data.metadata;
+
+    // Convert metadata from object to Map if it exists
+    if (data.metadata) {
+      this.metadata = new Map(Object.entries(data.metadata));
+    } else {
+      this.metadata = new Map();
+    }
+
     this.client = client;
   }
 
+  /**
+   * Delete the snapshot
+   */
   async delete(): Promise<void> {
     await this.client.DELETE(`/snapshot/${this.id}`);
+  }
+
+  /**
+   * Computes a chain hash based on the parent's chain hash and an effect identifier.
+   * The effect identifier is typically derived from the function name and its arguments.
+   * @param parentChainHash The parent's chain hash
+   * @param effectIdentifier A string identifier for the effect being applied
+   * @returns A new hash that combines the parent hash and the effect
+   */
+  static computeChainHash(parentChainHash: string, effectIdentifier: string): string {
+    const hasher = crypto.createHash('sha256');
+    hasher.update(parentChainHash);
+    hasher.update('\n');
+    hasher.update(effectIdentifier);
+    return hasher.digest('hex');
+  }
+
+  /**
+   * Runs a command on an instance and streams the output
+   * @param instance The instance to run the command on
+   * @param command The command to run
+   * @param background Whether to run in the background
+   * @param getPty Whether to allocate a PTY
+   */
+  private async _runCommandEffect(
+    instance: Instance,
+    command: string,
+    background: boolean = false,
+    getPty: boolean = true
+  ): Promise<void> {
+    console.log(`🔧 Running command${background ? ' (background)' : ''}: ${command}`);
+
+    const ssh = await instance.ssh();
+
+    try {
+      // Execute the command and capture output
+      const { stdout, stderr, code } = await ssh.execCommand(command, {
+        cwd: '/',
+        onStdout: (chunk) => {
+          process.stdout.write(chunk.toString('utf8'));
+        },
+        onStderr: (chunk) => {
+          process.stderr.write(chunk.toString('utf8'));
+        },
+        // Set up PTY if requested
+        ...(getPty ? { pty: true } : {})
+      });
+
+      if (code !== 0) {
+        console.warn(`⚠️ Warning: Command exited with code ${code}`);
+      }
+    } catch (error) {
+      console.error(`Error executing command: ${error}`);
+      throw error;
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  /**
+   * Generic caching mechanism based on a "chain hash".
+   * - Computes a unique hash from the parent's chain hash, the function name,
+   *   and string representations of args and kwargs.
+   * - If a snapshot already exists with that chain hash, returns it.
+   * - Otherwise, starts an instance from this snapshot, applies the function,
+   *   snapshots the instance, updates its metadata with the new chain hash,
+   *   and returns the new snapshot.
+   * 
+   * @param fn The effect function to apply
+   * @param args Arguments to pass to the effect function
+   * @returns A new (or cached) Snapshot with the updated chain hash
+   */
+  private async _cacheEffect<T extends any[]>(
+    fn: (instance: Instance, ...args: T) => Promise<void>,
+    ...args: T
+  ): Promise<Snapshot> {
+    // 1) Compute the new chain hash identifier from the parent's hash and effect details
+    const parentChainHash = this.metadata?.get('chain_hash') || this.id;
+    const effectIdentifier = fn.name + JSON.stringify(args);
+
+    console.log(`Effect function: ${fn.name}`);
+    console.log(`Arguments: ${JSON.stringify(args)}`);
+
+    const newChainHash = Snapshot.computeChainHash(parentChainHash, effectIdentifier);
+
+    // 2) Check for an existing snapshot with this chain hash
+    const metadata = new Map<string, string>();
+    metadata.set('chain_hash', newChainHash);
+
+    const candidates = await this.client.snapshots.list({
+      metadata
+    });
+
+    if (candidates.length > 0) {
+      console.log(`✅ Using cached snapshot for effect ${fn.name}.`);
+      return candidates[0];
+    }
+
+    // 3) Otherwise, apply the effect on a fresh instance
+    console.log(`🚀 Building new snapshot for effect ${fn.name}.`);
+    const instance = await this.client.instances.start({ snapshotId: this.id });
+
+    try {
+      await instance.waitUntilReady(300);
+      await fn(instance, ...args);
+      const newSnapshot = await instance.snapshot();
+
+      // 4) Tag the newly created snapshot with the computed chain hash
+      await newSnapshot.setMetadata(new Map([['chain_hash', newChainHash]]));
+
+      return newSnapshot;
+    } finally {
+      await instance.stop();
+    }
+  }
+
+  /**
+   * Run a command (with getPty=true, in the foreground) on top of this snapshot.
+   * Returns a new snapshot that includes the modifications from that command.
+   * Uses _cacheEffect(...) to avoid rebuilding if an identical effect (command) was applied before.
+   * 
+   * @param command The shell command to run
+   * @returns A new snapshot with the command applied
+   */
+  async setup(command: string): Promise<Snapshot> {
+    return this._cacheEffect(
+      async (instance: Instance, cmd: string, bg: boolean, pty: boolean) => {
+        await this._runCommandEffect(instance, cmd, bg, pty);
+      },
+      command,
+      false,
+      true
+    );
+  }
+
+  /**
+   * Sets metadata for the snapshot
+   * @param metadata Map of metadata key-value pairs to set
+   */
+  async setMetadata(metadata: Map<string, string>): Promise<void> {
+    // Convert the Map to a plain object for the API
+    const metadataObj: Record<string, string> = {};
+    metadata.forEach((value, key) => {
+      metadataObj[key] = value;
+    });
+
+    await this.client.POST(`/snapshot/${this.id}/metadata`, {}, metadataObj);
+
+    // Update the local metadata
+    if (!this.metadata) {
+      this.metadata = new Map<string, string>();
+    }
+
+    metadata.forEach((value, key) => {
+      this.metadata?.set(key, value);
+    });
   }
 }
 
