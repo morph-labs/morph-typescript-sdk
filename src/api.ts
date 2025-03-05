@@ -147,6 +147,7 @@ class Snapshot {
   readonly spec: ResourceSpec;
   readonly refs: SnapshotRefs;
   readonly digest?: string;
+  readonly metadata?: Map<string, string>;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -163,6 +164,7 @@ class Snapshot {
       imageId: data.refs.image_id,
     };
     this.digest = data.digest;
+    this.metadata = data.metadata;
     this.client = client;
   }
 
@@ -179,6 +181,7 @@ class Instance {
   readonly spec: ResourceSpec;
   readonly refs: InstanceRefs;
   networking: InstanceNetworking;
+  readonly metadata?: Map<string, string>;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -199,6 +202,7 @@ class Instance {
       internalIp: data.networking.internal_ip,
       httpServices: data.networking.http_services,
     };
+    this.metadata = data.metadata;
     this.client = client;
   }
 
