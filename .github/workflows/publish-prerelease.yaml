@@ -6,19 +6,13 @@ on:
         description: 'Tag for the test release (default: test)'
         required: true
         default: 'test'
-      increment:
-        description: 'Version increment type (patch, minor, major, prerelease)'
-        required: true
-        default: 'prerelease'
 jobs:
   build-and-publish-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
+        
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -34,16 +28,58 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
       
-      - name: Update version
-        id: update_version
+      - name: Create version script
         run: |
-          # Force increment the prerelease number
-          npm version prerelease --preid=${{ github.event.inputs.tag }} --no-git-tag-version --force
+          cat > update-version.js << 'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const packageJson = require('./package.json');
+          const tag = process.argv[2] || 'test';
           
-          # Output the new version
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "New version: $NEW_VERSION"
-          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          // Get base version without prerelease
+          let [baseVersion] = packageJson.version.split('-');
+          if (!baseVersion.match(/^\d+\.\d+\.\d+$/)) {
+            baseVersion = '0.0.6'; // Fallback if version format is unexpected
+          }
+          
+          // Query npm for existing versions
+          const { execSync } = require('child_process');
+          const npmVersions = execSync(`npm view ${packageJson.name} versions --json`).toString();
+          const versions = JSON.parse(npmVersions || '[]');
+          
+          // Find highest prerelease version with our tag
+          const regex = new RegExp(`^${baseVersion}-${tag}\.(\\d+)$`);
+          let highestPrerelease = -1;
+          
+          versions.forEach(version => {
+            const match = version.match(regex);
+            if (match) {
+              const num = parseInt(match[1], 10);
+              highestPrerelease = Math.max(highestPrerelease, num);
+            }
+          });
+          
+          // Set new version
+          const newVersion = `${baseVersion}-${tag}.${highestPrerelease + 1}`;
+          console.log(`Updating from ${packageJson.version} to ${newVersion}`);
+          
+          // Update package.json
+          packageJson.version = newVersion;
+          fs.writeFileSync(
+            path.resolve('./package.json'),
+            JSON.stringify(packageJson, null, 2) + '\n'
+          );
+          
+          console.log(`Version updated to ${newVersion}`);
+          // Output for GitHub Actions
+          console.log(`::set-output name=version::${newVersion}`);
+          EOF
+      
+      - name: Update version
+        id: version
+        run: |
+          node update-version.js ${{ github.event.inputs.tag }}
+          echo "Updated to version $(node -p "require('./package.json').version")"
       
       - name: Build package
         run: npm run build
@@ -60,5 +96,6 @@ jobs:
       
       - name: Output publish info
         run: |
-          echo "Published version ${{ steps.update_version.outputs.version }} with tag ${{ github.event.inputs.tag }}"
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Published version $VERSION with tag ${{ github.event.inputs.tag }}"
           echo "Install with: npm install morphcloud@${{ github.event.inputs.tag }}"
