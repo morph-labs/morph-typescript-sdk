@@ -459,7 +459,7 @@ class Instance {
     const ssh = new NodeSSH();
     return await ssh.connect({
       host: process.env.MORPH_SSH_HOSTNAME || MORPH_SSH_HOSTNAME,
-      port: process.env.MORPH_SSH_PORT || MORPH_SSH_PORT,
+      port: process.env.MORPH_SSH_PORT ? parseInt(process.env.MORPH_SSH_PORT) : MORPH_SSH_PORT,
       username: `${this.id}:${this.client.apiKey}`,
       privateKey: SSH_TEMP_KEYPAIR.privateKey,
     });
