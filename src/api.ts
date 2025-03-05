@@ -794,9 +794,9 @@ class MorphCloudClient {
   readonly baseUrl: string;
   readonly apiKey: string;
 
-  constructor({ apiKey, baseUrl = MORPH_BASE_URL }: MorphCloudClientOptions) {
-    this.apiKey = apiKey;
-    this.baseUrl = baseUrl;
+  constructor(options: MorphCloudClientOptions) {
+    this.apiKey = options.apiKey;
+    this.baseUrl = options.baseUrl || MORPH_BASE_URL;
   }
 
   private async request(
