@@ -68,7 +68,7 @@ interface InstanceExecResponse {
 }
 
 interface MorphCloudClientOptions {
-  apiKey: string;
+  apiKey?: string;
   baseUrl?: string;
 }
 
