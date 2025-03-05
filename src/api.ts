@@ -1,6 +1,9 @@
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
 
+type FSPromisesModule = typeof import('fs/promises');
+type PathModule = typeof import('path');
+
 const MORPH_BASE_URL = "https://cloud.morph.so/api";
 const MORPH_SSH_HOSTNAME = "ssh.cloud.morph.so";
 const MORPH_SSH_PORT = 22;
@@ -284,16 +287,16 @@ class Instance {
     dest: string,
     options: SyncOptions = {},
   ): Promise<void> {
+    const ignore = require("ignore");
+
+    const fs = await import("fs/promises");
+    const path = await import("path");
+
     const log = (level: "info" | "debug" | "error", message: string) => {
       if (options.verbose || level === "error") {
         console.log(`[${level.toUpperCase()}] ${message}`);
       }
     };
-
-    // Add at the beginning of the method
-    const ignore = require("ignore");
-    const fs = require("fs").promises;
-    const path = require("path");
 
     const getGitignore = async (dirPath: string): Promise<any> => {
       try {
@@ -463,9 +466,9 @@ class Instance {
       };
 
       // Update getLocalFiles to use gitignore
-      const getLocalFiles = async (
-        dir: string,
-      ): Promise<Map<string, FileInfo>> => {
+      const getLocalFiles = async (dir: string): Promise<Map<string, FileInfo>> => {
+        const fs = await import("fs/promises") as FSPromisesModule;
+        const path = await import("path") as PathModule;
         const files = new Map<string, FileInfo>();
 
         const ignoreRule = options.respectGitignore
@@ -552,8 +555,8 @@ class Instance {
       };
 
       const syncToRemote = async (localDir: string, remoteDir: string) => {
-        const { promises: fs } = require("fs");
-        const path = require("path");
+        const fs = await import("fs/promises");
+        const path = await import("path");
 
         await mkdirRemote(remoteDir);
 
@@ -666,8 +669,8 @@ class Instance {
       };
 
       const syncFromRemote = async (remoteDir: string, localDir: string) => {
-        const { promises: fs } = require("fs");
-        const path = require("path");
+        const fs = await import("fs/promises");
+        const path = await import("path");
 
         await fs.mkdir(localDir, { recursive: true });
 

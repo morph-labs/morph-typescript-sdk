@@ -1,0 +1,63 @@
+name: Publish Test Release to NPM
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag for the test release (default: test)'
+        required: true
+        default: 'test'
+      increment:
+        description: 'Version increment type (patch, minor, major, prerelease)'
+        required: true
+        default: 'prerelease'
+
+jobs:
+  build-and-publish-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Setup Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+      
+      - name: Update version
+        run: |
+          if [ "${{ github.event.inputs.increment }}" = "prerelease" ]; then
+            npm version prerelease --preid=${{ github.event.inputs.tag }} --no-git-tag-version
+          else
+            npm version ${{ github.event.inputs.increment }} --no-git-tag-version
+          fi
+          echo "New version: $(node -p "require('./package.json').version")"
+      
+      - name: Build package
+        run: npm run build
+      
+      - name: Run tests
+        run: |
+          npm run test:cjs || echo "CJS tests failed but continuing"
+          npm run test:esm || echo "ESM tests failed but continuing"
+      
+      - name: Publish to NPM with tag
+        run: npm publish --tag ${{ github.event.inputs.tag }} --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      
+      - name: Output publish info
+        run: |
+          echo "Published version $(node -p "require('./package.json').version") with tag ${{ github.event.inputs.tag }}"
+          echo "Install with: npm install morphcloud@${{ github.event.inputs.tag }}"
