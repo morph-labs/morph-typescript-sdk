@@ -85,6 +85,7 @@ interface SnapshotCreateOptions {
   memory?: number;
   diskSize?: number;
   digest?: string;
+  metadata?: Map<string, string>;
 }
 
 interface SnapshotGetOptions {
@@ -892,6 +893,7 @@ class MorphCloudClient {
         disk_size: options.diskSize,
         digest: options.digest,
         readiness_check: { type: "timeout", timeout: 10.0 },
+        metadata: options.metadata || {},
       };
       const response = await this.POST("/snapshot", {}, data);
       return new Snapshot(response, this);
