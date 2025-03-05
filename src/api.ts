@@ -76,6 +76,7 @@ interface ImageListOptions {}
 
 interface SnapshotListOptions {
   digest?: string;
+  metadata?: Map<string, string>;
 }
 
 interface SnapshotCreateOptions {
@@ -90,7 +91,9 @@ interface SnapshotGetOptions {
   snapshotId: string;
 }
 
-interface InstanceListOptions {}
+interface InstanceListOptions {
+  metadata?: Map<string, string>;
+}
 
 interface InstanceStartOptions {
   snapshotId: string;
@@ -858,7 +861,25 @@ class MorphCloudClient {
 
   snapshots = {
     list: async (options: SnapshotListOptions = {}): Promise<Snapshot[]> => {
-      const params = options.digest ? `?digest=${options.digest}` : "";
+      // safely build query string
+      const { digest, metadata } = options;
+      const queryParams = new URLSearchParams();
+
+      // Add digest if provided
+      if (digest) {
+        queryParams.append('digest', digest);
+      }
+
+      // Add metadata in stripe style format: metadata[key]=value
+      if (metadata && typeof metadata === 'object') {
+        Object.entries(metadata).forEach(([key, value]) => {
+          queryParams.append(`metadata[${key}]`, String(value));
+        });
+      }
+
+      // Build the final query string
+      const params = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
       const response = await this.GET(`/snapshot${params}`);
       return response.data.map((snapshot: any) => new Snapshot(snapshot, this));
     },
@@ -884,7 +905,19 @@ class MorphCloudClient {
 
   instances = {
     list: async (options: InstanceListOptions = {}): Promise<Instance[]> => {
-      const response = await this.GET("/instance");
+      const { metadata } = options;
+      const queryParams = new URLSearchParams();
+
+      // Add metadata in stripe style format: metadata[key]=value
+      if (metadata && typeof metadata === 'object') {
+        Object.entries(metadata).forEach(([key, value]) => {
+          queryParams.append(`metadata[${key}]`, String(value));
+        });
+      }
+
+      // Build the final query string
+      const params = queryParams.toString() ? `?${queryParams.toString()}` : '';
+      const response = await this.GET(`/instance${params}`);
       return response.data.map((instance: any) => new Instance(instance, this));
     },
 
