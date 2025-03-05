@@ -37,26 +37,8 @@ jobs:
       - name: Update version
         id: update_version
         run: |
-          # Get the current package version
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-          echo "Current version: $CURRENT_VERSION"
-          
-          # Check if the current version already has the specified tag
-          if [[ "$CURRENT_VERSION" == *"-${{ github.event.inputs.tag }}."* ]]; then
-            # It's already a prerelease with this tag, just increment prerelease number
-            npm version prerelease --no-git-tag-version
-          else
-            # Either not a prerelease or has a different tag
-            if [ "${{ github.event.inputs.increment }}" = "prerelease" ]; then
-              npm version prerelease --preid=${{ github.event.inputs.tag }} --no-git-tag-version
-            else
-              # For non-prerelease increments, do the increment first
-              npm version ${{ github.event.inputs.increment }} --no-git-tag-version
-              # Then convert to a prerelease of that new version
-              NEW_VERSION=$(node -p "require('./package.json').version")
-              npm version $NEW_VERSION-${{ github.event.inputs.tag }}.0 --no-git-tag-version --allow-same-version
-            fi
-          fi
+          # Force increment the prerelease number
+          npm version prerelease --preid=${{ github.event.inputs.tag }} --no-git-tag-version --force
           
           # Output the new version
           NEW_VERSION=$(node -p "require('./package.json').version")
