@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
 
@@ -70,13 +72,14 @@ interface InstanceExecResponse {
 interface MorphCloudClientOptions {
   apiKey?: string;
   baseUrl?: string;
+  verbose?: boolean;
 }
 
 interface ImageListOptions {}
 
 interface SnapshotListOptions {
   digest?: string;
-  metadata?: Map<string, string>;
+  metadata?: Record<string, string>;
 }
 
 interface SnapshotCreateOptions {
@@ -85,7 +88,7 @@ interface SnapshotCreateOptions {
   memory?: number;
   diskSize?: number;
   digest?: string;
-  metadata?: Map<string, string>;
+  metadata?: Record<string, string>;
 }
 
 interface SnapshotGetOptions {
@@ -93,11 +96,16 @@ interface SnapshotGetOptions {
 }
 
 interface InstanceListOptions {
-  metadata?: Map<string, string>;
+  metadata?: Record<string, string>;
 }
 
 interface InstanceStartOptions {
   snapshotId: string;
+}
+
+interface InstanceSnapshotOptions {
+  digest?: string;
+  metadata?: Record<string, string>;
 }
 
 interface InstanceGetOptions {
@@ -147,7 +155,7 @@ class Snapshot {
   readonly spec: ResourceSpec;
   readonly refs: SnapshotRefs;
   readonly digest?: string;
-  readonly metadata?: Map<string, string>;
+  metadata?: Record<string, string>;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -164,12 +172,167 @@ class Snapshot {
       imageId: data.refs.image_id,
     };
     this.digest = data.digest;
-    this.metadata = data.metadata;
+
+    if (data.metadata) {
+      this.metadata = { ...data.metadata };
+    } else {
+      this.metadata = {};
+    }
+
     this.client = client;
   }
 
+  /**
+   * Delete the snapshot
+   */
   async delete(): Promise<void> {
     await this.client.DELETE(`/snapshot/${this.id}`);
+  }
+
+  /**
+   * Computes a chain hash based on the parent's chain hash and an effect identifier.
+   * The effect identifier is typically derived from the function name and its arguments.
+   * @param parentChainHash The parent's chain hash
+   * @param effectIdentifier A string identifier for the effect being applied
+   * @returns A new hash that combines the parent hash and the effect
+   */
+  static computeChainHash(parentChainHash: string, effectIdentifier: string): string {
+    const hasher = crypto.createHash('sha256');
+    hasher.update(parentChainHash);
+    hasher.update('\n');
+    hasher.update(effectIdentifier);
+    return hasher.digest('hex');
+  }
+
+  /**
+   * Runs a command on an instance and streams the output
+   * @param instance The instance to run the command on
+   * @param command The command to run
+   * @param background Whether to run in the background
+   * @param getPty Whether to allocate a PTY
+   */
+  private async _runCommandEffect(
+    instance: Instance,
+    command: string,
+    background: boolean = false,
+    getPty: boolean = true
+  ): Promise<void> {
+    const ssh = await instance.ssh();
+
+    try {
+      // Execute the command and capture output
+      const { stdout, stderr, code } = await ssh.execCommand(command, {
+        cwd: '/',
+        onStdout: (chunk) => {
+          process.stdout.write(chunk.toString('utf8'));
+        },
+        onStderr: (chunk) => {
+          process.stderr.write(chunk.toString('utf8'));
+        },
+        // Set up PTY if requested
+        ...(getPty ? { pty: true } : {})
+      });
+
+      if (code !== 0 && code !== null) {
+        console.warn(`⚠️ ERROR: Command (${command}) exited with code ${code}`);
+        throw new Error(`Command exited with code ${code}`);
+      }
+    } catch (error) {
+      console.error(`Error executing command: ${error}`);
+      throw error;
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  /**
+   * Generic caching mechanism based on a "chain hash".
+   * - Computes a unique hash from the parent's chain hash, the function name,
+   *   and string representations of args and kwargs.
+   * - If a snapshot already exists with that chain hash, returns it.
+   * - Otherwise, starts an instance from this snapshot, applies the function,
+   *   snapshots the instance, updates its metadata with the new chain hash,
+   *   and returns the new snapshot.
+   * 
+   * @param fn The effect function to apply
+   * @param args Arguments to pass to the effect function
+   * @returns A new (or cached) Snapshot with the updated chain hash
+   */
+  private async _cacheEffect<T extends any[]>(
+    fn: (instance: Instance, ...args: T) => Promise<void>,
+    ...args: T
+  ): Promise<Snapshot> {
+    const metadata = this.metadata || {};
+    const parentChainHash = this.digest || this.id;
+    const effectIdentifier = fn.name + JSON.stringify(args);
+
+    const newChainHash = Snapshot.computeChainHash(parentChainHash, effectIdentifier);
+
+    const candidates = await this.client.snapshots.list({
+      digest: newChainHash,
+    });
+
+    if (candidates.length > 0) {
+      if (this.client.verbose) {
+        console.log(`✅ [CACHED] ${args}`);
+      }
+      return candidates[0];
+    }
+
+    // 3) Otherwise, apply the effect on a fresh instance
+    if (this.client.verbose) {
+      console.log(`🚀 [RUN] ${args}`);
+    }
+    const instance = await this.client.instances.start({ snapshotId: this.id });
+
+    try {
+      await instance.waitUntilReady(300);
+      await fn(instance, ...args);
+      const newSnapshot = await instance.snapshot({ digest: newChainHash });
+
+      return newSnapshot;
+    } finally {
+      await instance.stop();
+    }
+  }
+
+  /**
+   * Run a command (with getPty=true, in the foreground) on top of this snapshot.
+   * Returns a new snapshot that includes the modifications from that command.
+   * Uses _cacheEffect(...) to avoid rebuilding if an identical effect (command) was applied before.
+   * 
+   * @param command The shell command to run
+   * @returns A new snapshot with the command applied
+   */
+  async setup(command: string): Promise<Snapshot> {
+    return this._cacheEffect(
+      async (instance: Instance, cmd: string, bg: boolean, pty: boolean) => {
+        await this._runCommandEffect(instance, cmd, bg, pty);
+      },
+      command,
+      false,
+      true
+    );
+  }
+
+  /**
+   * Sets metadata for the snapshot
+   * @param metadata Metadata key-value pairs to set
+   */
+  async setMetadata(metadata: Record<string, string>): Promise<void> {
+    const metadataObj = metadata || {};
+
+    // Send the update to the API
+    await this.client.POST(`/snapshot/${this.id}/metadata`, {}, metadataObj);
+
+    // Update the local metadata
+    if (!this.metadata) {
+      this.metadata = {};
+    }
+
+    Object.entries(metadataObj).forEach(([key, value]) => {
+      this.metadata![key] = value;
+    });
   }
 }
 
@@ -181,7 +344,7 @@ class Instance {
   readonly spec: ResourceSpec;
   readonly refs: InstanceRefs;
   networking: InstanceNetworking;
-  readonly metadata?: Map<string, string>;
+  readonly metadata?: Record<string, string>;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -210,12 +373,16 @@ class Instance {
     await this.client.instances.stop({ instanceId: this.id });
   }
 
-  async snapshot(): Promise<Snapshot> {
+  async snapshot(options: InstanceSnapshotOptions = {}): Promise<Snapshot> {
+    const digest = options.digest || undefined;
+    const metadata = options.metadata || {};
+
     const response = await this.client.POST(
       `/instance/${this.id}/snapshot`,
-      {},
-      {},
+      { digest },
+      { metadata },
     );
+
     return new Snapshot(response, this.client);
   }
 
@@ -283,8 +450,8 @@ class Instance {
   async ssh(): Promise<NodeSSH> {
     const ssh = new NodeSSH();
     return await ssh.connect({
-      host: MORPH_SSH_HOSTNAME,
-      port: MORPH_SSH_PORT,
+      host: process.env.MORPH_SSH_HOSTNAME || MORPH_SSH_HOSTNAME,
+      port: process.env.MORPH_SSH_PORT ? parseInt(process.env.MORPH_SSH_PORT) : MORPH_SSH_PORT,
       username: `${this.id}:${this.client.apiKey}`,
       privateKey: SSH_TEMP_KEYPAIR.privateKey,
     });
@@ -801,10 +968,12 @@ class Instance {
 class MorphCloudClient {
   readonly baseUrl: string;
   readonly apiKey: string;
+  readonly verbose: boolean;
 
   constructor(options: MorphCloudClientOptions = {}) {
     this.apiKey = options.apiKey || process.env.MORPH_API_KEY || "";
     this.baseUrl = options.baseUrl || MORPH_BASE_URL;
+    this.verbose = options.verbose || false;
   }
 
   private async request(
@@ -876,7 +1045,7 @@ class MorphCloudClient {
       }
 
       // Add metadata in stripe style format: metadata[key]=value
-      if (metadata && typeof metadata === 'object') {
+      if (metadata) {
         Object.entries(metadata).forEach(([key, value]) => {
           queryParams.append(`metadata[${key}]`, String(value));
         });
@@ -890,6 +1059,30 @@ class MorphCloudClient {
     },
 
     create: async (options: SnapshotCreateOptions = {}): Promise<Snapshot> => {
+      // Convert Map to object if needed
+      let metadata = options.metadata;
+      if (metadata instanceof Map) {
+        metadata = Object.fromEntries(metadata.entries());
+      }
+
+      const create_digest = (options: SnapshotCreateOptions) => {
+        const hasher = crypto.createHash("sha256");
+        hasher.update(options.imageId || "");
+        hasher.update(String(options.vcpus));
+        hasher.update(String(options.memory));
+        hasher.update(String(options.diskSize));
+        // Sort metadata keys to ensure consistent hash
+        if (metadata) {
+          Object.keys(metadata).sort().forEach((key) => {
+            hasher.update(key);
+            hasher.update(metadata[key]);
+          });
+        }
+        return hasher.digest("hex");
+      }
+
+      const digest = options.digest || create_digest(options);
+
       const data = {
         image_id: options.imageId,
         vcpus: options.vcpus,
@@ -897,7 +1090,7 @@ class MorphCloudClient {
         disk_size: options.diskSize,
         digest: options.digest,
         readiness_check: { type: "timeout", timeout: 10.0 },
-        metadata: options.metadata || {},
+        metadata: metadata || {},
       };
       const response = await this.POST("/snapshot", {}, data);
       return new Snapshot(response, this);
