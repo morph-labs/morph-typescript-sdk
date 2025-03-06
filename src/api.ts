@@ -72,13 +72,14 @@ interface InstanceExecResponse {
 interface MorphCloudClientOptions {
   apiKey?: string;
   baseUrl?: string;
+  verbose?: boolean;
 }
 
 interface ImageListOptions {}
 
 interface SnapshotListOptions {
   digest?: string;
-  metadata?: Record<string, string> | Map<string, string>;
+  metadata?: Record<string, string>;
 }
 
 interface SnapshotCreateOptions {
@@ -87,7 +88,7 @@ interface SnapshotCreateOptions {
   memory?: number;
   diskSize?: number;
   digest?: string;
-  metadata?: Record<string, string> | Map<string, string>;
+  metadata?: Record<string, string>;
 }
 
 interface SnapshotGetOptions {
@@ -95,11 +96,16 @@ interface SnapshotGetOptions {
 }
 
 interface InstanceListOptions {
-  metadata?: Map<string, string>;
+  metadata?: Record<string, string>;
 }
 
 interface InstanceStartOptions {
   snapshotId: string;
+}
+
+interface InstanceSnapshotOptions {
+  digest?: string;
+  metadata?: Record<string, string>;
 }
 
 interface InstanceGetOptions {
@@ -149,7 +155,7 @@ class Snapshot {
   readonly spec: ResourceSpec;
   readonly refs: SnapshotRefs;
   readonly digest?: string;
-  metadata?: Map<string, string>;
+  metadata?: Record<string, string>;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -167,11 +173,10 @@ class Snapshot {
     };
     this.digest = data.digest;
 
-    // Convert metadata from object to Map if it exists
     if (data.metadata) {
-      this.metadata = new Map(Object.entries(data.metadata));
+      this.metadata = { ...data.metadata };
     } else {
-      this.metadata = new Map();
+      this.metadata = {};
     }
 
     this.client = client;
@@ -212,8 +217,6 @@ class Snapshot {
     background: boolean = false,
     getPty: boolean = true
   ): Promise<void> {
-    console.log(`🔧 Running command${background ? ' (background)' : ''}: ${command}`);
-
     const ssh = await instance.ssh();
 
     try {
@@ -230,8 +233,9 @@ class Snapshot {
         ...(getPty ? { pty: true } : {})
       });
 
-      if (code !== 0) {
-        console.warn(`⚠️ Warning: Command exited with code ${code}`);
+      if (code !== 0 && code !== null) {
+        console.warn(`⚠️ ERROR: Command (${command}) exited with code ${code}`);
+        throw new Error(`Command exited with code ${code}`);
       }
     } catch (error) {
       console.error(`Error executing command: ${error}`);
@@ -258,45 +262,33 @@ class Snapshot {
     fn: (instance: Instance, ...args: T) => Promise<void>,
     ...args: T
   ): Promise<Snapshot> {
-    // 1) Compute the new chain hash identifier from the parent's hash and effect details
-    // Get chain_hash from metadata object or use ID
-    const metadata = this.metadata || new Map<string, string>();
-    const parentChainHash = metadata.get('chain_hash') || this.id;
+    const metadata = this.metadata || {};
+    const parentChainHash = this.digest || this.id;
     const effectIdentifier = fn.name + JSON.stringify(args);
-
-    console.log(`Effect function: ${fn.name}`);
-    console.log(`Arguments: ${JSON.stringify(args)}`);
 
     const newChainHash = Snapshot.computeChainHash(parentChainHash, effectIdentifier);
 
-    // 2) Check for an existing snapshot with this chain hash
-    // Create metadata object for the API call - important: use plain object here, not Map
-    const metadataObj: Record<string, string> = {
-      'chain_hash': newChainHash
-    };
-
-    // Pass plain object to list
     const candidates = await this.client.snapshots.list({
-      metadata: metadataObj
+      digest: newChainHash,
     });
 
     if (candidates.length > 0) {
-      console.log(`✅ Using cached snapshot for effect ${fn.name}.`);
+      if (this.client.verbose) {
+        console.log(`✅ [CACHED] ${args}`);
+      }
       return candidates[0];
     }
 
     // 3) Otherwise, apply the effect on a fresh instance
-    console.log(`🚀 Building new snapshot for effect ${fn.name}.`);
+    if (this.client.verbose) {
+      console.log(`🚀 [RUN] ${args}`);
+    }
     const instance = await this.client.instances.start({ snapshotId: this.id });
 
     try {
       await instance.waitUntilReady(300);
       await fn(instance, ...args);
-      const newSnapshot = await instance.snapshot();
-
-      // 4) Tag the newly created snapshot with the computed chain hash
-      // Important: use plain object for the API call
-      await newSnapshot.setMetadata({ 'chain_hash': newChainHash });
+      const newSnapshot = await instance.snapshot({ digest: newChainHash });
 
       return newSnapshot;
     } finally {
@@ -327,23 +319,19 @@ class Snapshot {
    * Sets metadata for the snapshot
    * @param metadata Metadata key-value pairs to set
    */
-  async setMetadata(metadata: Record<string, string> | Map<string, string>): Promise<void> {
-    // Convert to plain object if it's a Map
-    const metadataObj: Record<string, string> = metadata instanceof Map 
-      ? Object.fromEntries(metadata.entries())
-      : metadata;
+  async setMetadata(metadata: Record<string, string>): Promise<void> {
+    const metadataObj = metadata || {};
 
     // Send the update to the API
     await this.client.POST(`/snapshot/${this.id}/metadata`, {}, metadataObj);
 
     // Update the local metadata
     if (!this.metadata) {
-      this.metadata = new Map<string, string>();
+      this.metadata = {};
     }
 
-    // Update the local Map with new values
     Object.entries(metadataObj).forEach(([key, value]) => {
-      this.metadata?.set(key, value);
+      this.metadata![key] = value;
     });
   }
 }
@@ -356,7 +344,7 @@ class Instance {
   readonly spec: ResourceSpec;
   readonly refs: InstanceRefs;
   networking: InstanceNetworking;
-  readonly metadata?: Map<string, string>;
+  readonly metadata?: Record<string, string>;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -385,12 +373,16 @@ class Instance {
     await this.client.instances.stop({ instanceId: this.id });
   }
 
-  async snapshot(): Promise<Snapshot> {
+  async snapshot(options: InstanceSnapshotOptions = {}): Promise<Snapshot> {
+    const digest = options.digest || undefined;
+    const metadata = options.metadata || {};
+
     const response = await this.client.POST(
       `/instance/${this.id}/snapshot`,
-      {},
-      {},
+      { digest },
+      { metadata },
     );
+
     return new Snapshot(response, this.client);
   }
 
@@ -976,10 +968,12 @@ class Instance {
 class MorphCloudClient {
   readonly baseUrl: string;
   readonly apiKey: string;
+  readonly verbose: boolean;
 
   constructor(options: MorphCloudClientOptions = {}) {
     this.apiKey = options.apiKey || process.env.MORPH_API_KEY || "";
     this.baseUrl = options.baseUrl || MORPH_BASE_URL;
+    this.verbose = options.verbose || false;
   }
 
   private async request(
@@ -1052,12 +1046,7 @@ class MorphCloudClient {
 
       // Add metadata in stripe style format: metadata[key]=value
       if (metadata) {
-        // Convert Map to Record if needed
-        const metadataObj = metadata instanceof Map 
-          ? Object.fromEntries(metadata.entries()) 
-          : metadata;
-
-        Object.entries(metadataObj).forEach(([key, value]) => {
+        Object.entries(metadata).forEach(([key, value]) => {
           queryParams.append(`metadata[${key}]`, String(value));
         });
       }
@@ -1075,6 +1064,24 @@ class MorphCloudClient {
       if (metadata instanceof Map) {
         metadata = Object.fromEntries(metadata.entries());
       }
+
+      const create_digest = (options: SnapshotCreateOptions) => {
+        const hasher = crypto.createHash("sha256");
+        hasher.update(options.imageId || "");
+        hasher.update(String(options.vcpus));
+        hasher.update(String(options.memory));
+        hasher.update(String(options.diskSize));
+        // Sort metadata keys to ensure consistent hash
+        if (metadata) {
+          Object.keys(metadata).sort().forEach((key) => {
+            hasher.update(key);
+            hasher.update(metadata[key]);
+          });
+        }
+        return hasher.digest("hex");
+      }
+
+      const digest = options.digest || create_digest(options);
 
       const data = {
         image_id: options.imageId,
