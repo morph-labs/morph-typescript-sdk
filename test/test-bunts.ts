@@ -1,9 +1,9 @@
 // TypeScript/Bun style import
-import { MorphCloudClient } from '../dist/index.mjs';
+import { MorphCloudClient } from '../src/index';
 
 console.log('Testing Bun import:');
 console.log(typeof MorphCloudClient === 'function' 
-  ? '✅ MorphCloudClient imported successfully with Bun' 
+  ? '✅ MorphCloudClient imported successfully with Bun Typescript' 
   : '❌ Failed to import MorphCloudClient with Bun');
 
 // Create an instance (without API key) just to test initialization
