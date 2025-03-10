@@ -405,8 +405,14 @@ class Instance {
   async exposeHttpService(
     name: string,
     port: number,
+    auth_mode?: string
   ): Promise<InstanceHttpService> {
-    await this.client.POST(`/instance/${this.id}/http`, {}, { name, port });
+    const payload = { name, port };
+    if (auth_mode !== undefined) {
+      payload["auth_mode"] = auth_mode;
+    }
+
+    await this.client.POST(`/instance/${this.id}/http`, {}, payload);
     await this.refresh();
 
     let service = this.networking.httpServices.find(
@@ -420,6 +426,7 @@ class Instance {
 
   async hideHttpService(name: string): Promise<void> {
     await this.client.DELETE(`/instance/${this.id}/http/${name}`);
+
     await this.refresh();
   }
 
