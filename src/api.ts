@@ -33,6 +33,7 @@ enum SnapshotStatus {
 enum InstanceStatus {
   PENDING = "pending",
   READY = "ready",
+  PAUSED = "paused",
   SAVING = "saving",
   ERROR = "error",
 }
@@ -371,6 +372,16 @@ class Instance {
 
   async stop(): Promise<void> {
     await this.client.instances.stop({ instanceId: this.id });
+  }
+
+  async pause(): Promise<void> {
+    await this.client.POST(`/instance/${this.id}/pause`);
+    await this.refresh();
+  }
+
+  async resume(): Promise<void> {
+    await this.client.POST(`/instance/${this.id}/resume`);
+    await this.refresh();
   }
 
   async snapshot(options: InstanceSnapshotOptions = {}): Promise<Snapshot> {
