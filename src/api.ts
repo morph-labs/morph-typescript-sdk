@@ -1,9 +1,9 @@
-import * as crypto from 'crypto';
+import * as crypto from "crypto";
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
 
-type FSPromisesModule = typeof import('fs/promises');
-type PathModule = typeof import('path');
+type FSPromisesModule = typeof import("fs/promises");
+type PathModule = typeof import("path");
 
 const MORPH_BASE_URL = "https://cloud.morph.so/api";
 const MORPH_SSH_HOSTNAME = "ssh.cloud.morph.so";
@@ -200,12 +200,15 @@ class Snapshot {
    * @param effectIdentifier A string identifier for the effect being applied
    * @returns A new hash that combines the parent hash and the effect
    */
-  static computeChainHash(parentChainHash: string, effectIdentifier: string): string {
-    const hasher = crypto.createHash('sha256');
+  static computeChainHash(
+    parentChainHash: string,
+    effectIdentifier: string
+  ): string {
+    const hasher = crypto.createHash("sha256");
     hasher.update(parentChainHash);
-    hasher.update('\n');
+    hasher.update("\n");
     hasher.update(effectIdentifier);
-    return hasher.digest('hex');
+    return hasher.digest("hex");
   }
 
   /**
@@ -226,15 +229,15 @@ class Snapshot {
     try {
       // Execute the command and capture output
       const { stdout, stderr, code } = await ssh.execCommand(command, {
-        cwd: '/',
+        cwd: "/",
         onStdout: (chunk) => {
-          process.stdout.write(chunk.toString('utf8'));
+          process.stdout.write(chunk.toString("utf8"));
         },
         onStderr: (chunk) => {
-          process.stderr.write(chunk.toString('utf8'));
+          process.stderr.write(chunk.toString("utf8"));
         },
         // Set up PTY if requested
-        ...(getPty ? { pty: true } : {})
+        ...(getPty ? { pty: true } : {}),
       });
 
       if (code !== 0 && code !== null) {
@@ -257,7 +260,7 @@ class Snapshot {
    * - Otherwise, starts an instance from this snapshot, applies the function,
    *   snapshots the instance, updates its metadata with the new chain hash,
    *   and returns the new snapshot.
-   * 
+   *
    * @param fn The effect function to apply
    * @param args Arguments to pass to the effect function
    * @returns A new (or cached) Snapshot with the updated chain hash
@@ -270,7 +273,10 @@ class Snapshot {
     const parentChainHash = this.digest || this.id;
     const effectIdentifier = fn.name + JSON.stringify(args);
 
-    const newChainHash = Snapshot.computeChainHash(parentChainHash, effectIdentifier);
+    const newChainHash = Snapshot.computeChainHash(
+      parentChainHash,
+      effectIdentifier
+    );
 
     const candidates = await this.client.snapshots.list({
       digest: newChainHash,
@@ -304,7 +310,7 @@ class Snapshot {
    * Run a command (with getPty=true, in the foreground) on top of this snapshot.
    * Returns a new snapshot that includes the modifications from that command.
    * Uses _cacheEffect(...) to avoid rebuilding if an identical effect (command) was applied before.
-   * 
+   *
    * @param command The shell command to run
    * @returns A new snapshot with the command applied
    */
@@ -399,7 +405,7 @@ class Instance {
     const response = await this.client.POST(
       `/instance/${this.id}/snapshot`,
       { digest },
-      { metadata },
+      { metadata }
     );
 
     return new Snapshot(response, this.client);
@@ -412,11 +418,11 @@ class Instance {
     const response = await this.client.POST(
       `/instance/${this.id}/branch`,
       { count },
-      {},
+      {}
     );
     const snapshot = new Snapshot(response.snapshot, this.client);
     const instances = response.instances.map(
-      (i: any) => new Instance(i, this.client),
+      (i: any) => new Instance(i, this.client)
     );
     return { snapshot, instances };
   }
@@ -435,7 +441,7 @@ class Instance {
     await this.refresh();
 
     let service = this.networking.httpServices.find(
-      (service) => service.name === name,
+      (service) => service.name === name
     );
     if (service === undefined) {
       throw new Error("Failed to expose HTTP service");
@@ -454,7 +460,7 @@ class Instance {
     const response = await this.client.POST(
       `/instance/${this.id}/exec`,
       {},
-      { command: cmd },
+      { command: cmd }
     );
     return response;
   }
@@ -477,7 +483,9 @@ class Instance {
     const ssh = new NodeSSH();
     return await ssh.connect({
       host: process.env.MORPH_SSH_HOSTNAME || MORPH_SSH_HOSTNAME,
-      port: process.env.MORPH_SSH_PORT ? parseInt(process.env.MORPH_SSH_PORT) : MORPH_SSH_PORT,
+      port: process.env.MORPH_SSH_PORT
+        ? parseInt(process.env.MORPH_SSH_PORT)
+        : MORPH_SSH_PORT,
       username: `${this.id}:${this.client.apiKey}`,
       privateKey: SSH_TEMP_KEYPAIR.privateKey,
     });
@@ -486,7 +494,7 @@ class Instance {
   async sync(
     source: string,
     dest: string,
-    options: SyncOptions = {},
+    options: SyncOptions = {}
   ): Promise<void> {
     const ignore = require("ignore");
 
@@ -512,7 +520,7 @@ class Instance {
     const shouldIgnore = (
       filePath: string,
       baseDir: string,
-      ignoreRule: any,
+      ignoreRule: any
     ): boolean => {
       if (!ignoreRule) return false;
       const relativePath = path.relative(baseDir, filePath);
@@ -550,7 +558,7 @@ class Instance {
       (!sourceInstance && !destInstance)
     ) {
       throw new Error(
-        "One (and only one) path must be a remote path in the format instance_id:/path",
+        "One (and only one) path must be a remote path in the format instance_id:/path"
       );
     }
 
@@ -558,7 +566,7 @@ class Instance {
     const instanceId = sourceInstance || destInstance;
     if (instanceId !== this.id) {
       throw new Error(
-        `Instance ID in path (${instanceId}) doesn't match this instance (${this.id})`,
+        `Instance ID in path (${instanceId}) doesn't match this instance (${this.id})`
       );
     }
 
@@ -567,7 +575,7 @@ class Instance {
       "info",
       options.dryRun
         ? "[DRY RUN] "
-        : "" + `Syncing ${sourceInstance ? "from" : "to"} remote...`,
+        : "" + `Syncing ${sourceInstance ? "from" : "to"} remote...`
     );
 
     // Connect SSH
@@ -636,7 +644,7 @@ class Instance {
 
     try {
       const getRemoteFiles = async (
-        dir: string,
+        dir: string
       ): Promise<Map<string, FileInfo>> => {
         const files = new Map<string, FileInfo>();
 
@@ -667,9 +675,11 @@ class Instance {
       };
 
       // Update getLocalFiles to use gitignore
-      const getLocalFiles = async (dir: string): Promise<Map<string, FileInfo>> => {
-        const fs = await import("fs/promises") as FSPromisesModule;
-        const path = await import("path") as PathModule;
+      const getLocalFiles = async (
+        dir: string
+      ): Promise<Map<string, FileInfo>> => {
+        const fs = (await import("fs/promises")) as FSPromisesModule;
+        const path = (await import("path")) as PathModule;
         const files = new Map<string, FileInfo>();
 
         const ignoreRule = options.respectGitignore
@@ -807,12 +817,12 @@ class Instance {
         log("info", "\nChanges to be made:");
         log(
           "info",
-          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`,
+          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`
         );
         if (options.delete) {
           log(
             "info",
-            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`,
+            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`
           );
         }
 
@@ -827,7 +837,7 @@ class Instance {
             if (change.type === "copy") {
               log(
                 "info",
-                `  Would copy: ${change.dest} (${formatSize(change.size!)})`,
+                `  Would copy: ${change.dest} (${formatSize(change.size!)})`
               );
             } else {
               log("info", `  Would delete: ${change.dest}`);
@@ -852,7 +862,7 @@ class Instance {
               await promisifiedSftp.utimes(
                 change.dest,
                 stat.mtimeMs / 1000,
-                stat.mtimeMs / 1000,
+                stat.mtimeMs / 1000
               );
             } else {
               log("info", `Deleting ${change.dest}`);
@@ -862,7 +872,7 @@ class Instance {
             const sftpError = error as SFTPError;
             log(
               "error",
-              `Error processing ${change.dest}: ${sftpError.message} (code: ${sftpError.code})`,
+              `Error processing ${change.dest}: ${sftpError.message} (code: ${sftpError.code})`
             );
             throw error;
           }
@@ -921,12 +931,12 @@ class Instance {
         log("info", "\nChanges to be made:");
         log(
           "info",
-          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`,
+          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`
         );
         if (options.delete) {
           log(
             "info",
-            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`,
+            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`
           );
         }
 
@@ -941,7 +951,7 @@ class Instance {
             if (change.type === "copy") {
               log(
                 "info",
-                `  Would copy: ${change.dest} (${formatSize(change.size!)})`,
+                `  Would copy: ${change.dest} (${formatSize(change.size!)})`
               );
             } else {
               log("info", `  Would delete: ${change.dest}`);
@@ -1006,7 +1016,7 @@ class MorphCloudClient {
     method: string,
     endpoint: string,
     query?: any,
-    data?: any,
+    data?: any
   ) {
     let uri = new URL(this.baseUrl + endpoint);
     if (query) {
@@ -1030,7 +1040,7 @@ class MorphCloudClient {
         errorBody = await response.text();
       }
       throw new Error(
-        `HTTP Error ${response.status} for url '${response.url}'\nResponse Body: ${JSON.stringify(errorBody, null, 2)}`,
+        `HTTP Error ${response.status} for url '${response.url}'\nResponse Body: ${JSON.stringify(errorBody, null, 2)}`
       );
     }
     try {
@@ -1067,7 +1077,7 @@ class MorphCloudClient {
 
       // Add digest if provided
       if (digest) {
-        queryParams.append('digest', digest);
+        queryParams.append("digest", digest);
       }
 
       // Add metadata in stripe style format: metadata[key]=value
@@ -1078,7 +1088,7 @@ class MorphCloudClient {
       }
 
       // Build the final query string
-      const params = queryParams.toString() ? `?${queryParams.toString()}` : '';
+      const params = queryParams.toString() ? `?${queryParams.toString()}` : "";
 
       const response = await this.GET(`/snapshot${params}`);
       return response.data.map((snapshot: any) => new Snapshot(snapshot, this));
@@ -1099,13 +1109,15 @@ class MorphCloudClient {
         hasher.update(String(options.diskSize));
         // Sort metadata keys to ensure consistent hash
         if (metadata) {
-          Object.keys(metadata).sort().forEach((key) => {
-            hasher.update(key);
-            hasher.update(metadata[key]);
-          });
+          Object.keys(metadata)
+            .sort()
+            .forEach((key) => {
+              hasher.update(key);
+              hasher.update(metadata[key]);
+            });
         }
         return hasher.digest("hex");
-      }
+      };
 
       const digest = options.digest || create_digest(options);
 
@@ -1134,26 +1146,26 @@ class MorphCloudClient {
       const queryParams = new URLSearchParams();
 
       // Add metadata in stripe style format: metadata[key]=value
-      if (metadata && typeof metadata === 'object') {
+      if (metadata && typeof metadata === "object") {
         Object.entries(metadata).forEach(([key, value]) => {
           queryParams.append(`metadata[${key}]`, String(value));
         });
       }
 
       // Build the final query string
-      const params = queryParams.toString() ? `?${queryParams.toString()}` : '';
+      const params = queryParams.toString() ? `?${queryParams.toString()}` : "";
       const response = await this.GET(`/instance${params}`);
       return response.data.map((instance: any) => new Instance(instance, this));
     },
 
     start: async (options: InstanceStartOptions): Promise<Instance> => {
       const { snapshotId, metadata, ttlSeconds, ttlAction } = options;
-      
+
       // Build query parameters
-      const queryParams = { 
-        snapshot_id: snapshotId 
+      const queryParams = {
+        snapshot_id: snapshotId,
       };
-      
+
       // Build request body
       const body: any = {};
       if (metadata) {
@@ -1191,4 +1203,17 @@ export type {
   InstanceNetworking,
   InstanceRefs,
   InstanceExecResponse,
+  Snapshot,
+  Instance,
+  Image,
+  SyncOptions,
+  SnapshotCreateOptions,
+  SnapshotGetOptions,
+  SnapshotListOptions,
+  ImageListOptions,
+  InstanceListOptions,
+  InstanceStartOptions,
+  InstanceSnapshotOptions,
+  InstanceGetOptions,
+  InstanceStopOptions,
 };
