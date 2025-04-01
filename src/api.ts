@@ -1,5 +1,4 @@
 import * as crypto from 'crypto';
-
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
 
@@ -57,6 +56,7 @@ interface InstanceHttpService {
 interface InstanceNetworking {
   internalIp?: string;
   httpServices: InstanceHttpService[];
+  auth_mode?: string;
 }
 
 interface InstanceRefs {
@@ -102,6 +102,9 @@ interface InstanceListOptions {
 
 interface InstanceStartOptions {
   snapshotId: string;
+  metadata?: Record<string, string>;
+  ttlSeconds?: number;
+  ttlAction?: "stop" | "pause";
 }
 
 interface InstanceSnapshotOptions {
@@ -384,6 +387,11 @@ class Instance {
     await this.refresh();
   }
 
+  async setMetadata(metadata: Record<string, string>): Promise<void> {
+    await this.client.POST(`/instance/${this.id}/metadata`, {}, metadata);
+    await this.refresh();
+  }
+
   async snapshot(options: InstanceSnapshotOptions = {}): Promise<Snapshot> {
     const digest = options.digest || undefined;
     const metadata = options.metadata || {};
@@ -418,9 +426,9 @@ class Instance {
     port: number,
     auth_mode?: string
   ): Promise<InstanceHttpService> {
-    const payload = { name, port };
+    const payload: any = { name, port };
     if (auth_mode !== undefined) {
-      payload["auth_mode"] = auth_mode;
+      payload.auth_mode = auth_mode;
     }
 
     await this.client.POST(`/instance/${this.id}/http`, {}, payload);
@@ -1032,7 +1040,7 @@ class MorphCloudClient {
     }
   }
 
-  async GET(endpoint: string, query?: string) {
+  async GET(endpoint: string, query?: any) {
     return this.request("GET", endpoint, query);
   }
 
@@ -1139,9 +1147,26 @@ class MorphCloudClient {
     },
 
     start: async (options: InstanceStartOptions): Promise<Instance> => {
-      const response = await this.POST("/instance", {
-        snapshot_id: options.snapshotId,
-      });
+      const { snapshotId, metadata, ttlSeconds, ttlAction } = options;
+      
+      // Build query parameters
+      const queryParams = { 
+        snapshot_id: snapshotId 
+      };
+      
+      // Build request body
+      const body: any = {};
+      if (metadata) {
+        body.metadata = metadata;
+      }
+      if (ttlSeconds !== undefined) {
+        body.ttl_seconds = ttlSeconds;
+      }
+      if (ttlAction) {
+        body.ttl_action = ttlAction;
+      }
+
+      const response = await this.POST("/instance", queryParams, body);
       return new Instance(response, this);
     },
 
