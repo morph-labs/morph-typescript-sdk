@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
+import ignore from "ignore";
 
 type FSPromisesModule = typeof import("fs/promises");
 type PathModule = typeof import("path");
@@ -496,7 +497,6 @@ class Instance {
     dest: string,
     options: SyncOptions = {}
   ): Promise<void> {
-    const ignore = require("ignore");
 
     const fs = await import("fs/promises");
     const path = await import("path");
