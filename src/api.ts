@@ -1,7 +1,8 @@
 import * as crypto from "crypto";
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
-import ignore from "ignore";
+// Import the factory function from ignore
+const ignore = require("ignore");
 
 type FSPromisesModule = typeof import("fs/promises");
 type PathModule = typeof import("path");
