@@ -464,7 +464,12 @@ class Instance {
       {},
       { command: cmd }
     );
-    return response;
+    
+    return {
+      exitCode: response.exit_code,
+      stdout: response.stdout,
+      stderr: response.stderr,
+    };
   }
 
   async waitUntilReady(timeout?: number): Promise<void> {
