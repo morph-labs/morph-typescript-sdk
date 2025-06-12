@@ -4,6 +4,25 @@ import { v4 as uuidv4 } from 'uuid';
 // Increase default Jest timeout for cloud operations
 jest.setTimeout(300000);
 
+/**
+ * Retries an async function up to `retries` times with a delay.
+ */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delayMs = 5000): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries) {
+        console.warn(`Attempt ${attempt} failed. Retrying in ${delayMs}ms...`, err);
+        await new Promise(res => setTimeout(res, delayMs));
+      }
+    }
+  }
+  throw lastError;
+}
+
 describe('Command Execution', () => {
   let client: MorphCloudClient;
   let testSnapshot: Snapshot;
@@ -16,21 +35,23 @@ describe('Command Execution', () => {
       verbose: true,
     });
 
-    // Pick a base image
-    const images: Image[] = await client.images.list({ limit: 1 });
+    // Pick a base image with retries
+    const images: Image[] = await withRetry(() => client.images.list({ limit: 1 }));
     if (!images.length) throw new Error('No base images available');
     const baseImage = images[0];
 
-    // Create a fresh snapshot
-    testSnapshot = await client.snapshots.create({
-      imageId: baseImage.id,
-      vcpus: 1,
-      memory: 512,
-      diskSize: 8192,
-    });
+    // Create a fresh snapshot with retries
+    testSnapshot = await withRetry(() =>
+      client.snapshots.create({
+        imageId: baseImage.id,
+        vcpus: 1,
+        memory: 512,
+        diskSize: 8192,
+      })
+    );
 
-    // Start instance
-    testInstance = await client.instances.start({ snapshotId: testSnapshot.id });
+    // Start instance with retries
+    testInstance = await withRetry(() => client.instances.start({ snapshotId: testSnapshot.id }));
     await testInstance.waitUntilReady(240);
   }, 300000);
 
@@ -77,8 +98,8 @@ describe('Command Execution', () => {
   });
 
   afterAll(async () => {
-    // Stop instance and delete snapshot
-    try { await testInstance.stop(); } catch {};
-    try { await testSnapshot.delete(); } catch {};
+    // Stop instance and delete snapshot (best-effort)
+    try { await testInstance.stop(); } catch (err) { console.warn('Error stopping instance', err); }
+    try { await testSnapshot.delete(); } catch (err) { console.warn('Error deleting snapshot', err); }
   });
 });
