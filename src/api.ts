@@ -1006,6 +1006,42 @@ class Instance {
     Object.assign(this, instance);
   }
 
+  // Add these methods inside the 'Instance' class in api.ts
+
+  /**
+   * Upload a local file or directory to the instance.
+   * This is a convenience wrapper around the sync method.
+   * @param localPath The path to the local file or directory.
+   * @param remotePath The destination path on the instance (e.g., '/root/my-file.txt').
+   * @param options Configuration options for the sync operation.
+   */
+  async upload(
+    localPath: string,
+    remotePath: string,
+    options: SyncOptions = {}
+  ): Promise<void> {
+    // The sync method requires the remote path to be prefixed with the instance ID and a colon.
+    const destination = `${this.id}:${remotePath}`;
+    await this.sync(localPath, destination, options);
+  }
+
+  /**
+   * Download a file or directory from the instance.
+   * This is a convenience wrapper around the sync method.
+   * @param remotePath The path to the file or directory on the instance.
+   * @param localPath The local destination path.
+   * @param options Configuration options for the sync operation.
+   */
+  async download(
+    remotePath: string,
+    localPath: string,
+    options: SyncOptions = {}
+  ): Promise<void> {
+    // The sync method requires the remote path to be prefixed with the instance ID and a colon.
+    const source = `${this.id}:${remotePath}`;
+    await this.sync(source, localPath, options);
+  }
+
   /**
    * Update the TTL (Time To Live) for the instance.
    *
@@ -1228,7 +1264,7 @@ class MorphCloudClient {
 }
 
 export { MorphCloudClient };
-export { InstanceStatus, SnapshotStatus };
+export { Instance, InstanceStatus, SnapshotStatus };
 export type {
   MorphCloudClientOptions,
   ResourceSpec,
@@ -1238,7 +1274,6 @@ export type {
   InstanceRefs,
   InstanceExecResponse,
   Snapshot,
-  Instance,
   Image,
   SyncOptions,
   SnapshotCreateOptions,
