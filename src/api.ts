@@ -109,6 +109,15 @@ interface InstanceStartOptions {
   ttlAction?: "stop" | "pause";
 }
 
+interface InstanceBootOptions {
+    snapshotId: string;
+    vcpus?: number;
+    memory?: number;
+    diskSize?: number;
+    metadata?: Record<string, string>;
+}
+
+
 interface InstanceSnapshotOptions {
   digest?: string;
   metadata?: Record<string, string>;
@@ -1260,6 +1269,20 @@ class MorphCloudClient {
     stop: async (options: InstanceStopOptions): Promise<void> => {
       await this.DELETE(`/instance/${options.instanceId}`);
     },
+
+
+    boot: async (options: InstanceBootOptions): Promise<Instance> => {
+        const { snapshotId, vcpus, memory, diskSize, metadata } = options;
+
+        const body: any = {};
+        if (vcpus !== undefined) body.vcpus = vcpus;
+        if (memory !== undefined) body.memory = memory;
+        if (diskSize !== undefined) body.disk_size = diskSize;
+        if (metadata) body.metadata = metadata;
+
+        const response = await this.POST(`/snapshot/${snapshotId}/boot`, {}, body);
+        return new Instance(response, this);
+    },
   };
 }
 
@@ -1282,6 +1305,7 @@ export type {
   ImageListOptions,
   InstanceListOptions,
   InstanceStartOptions,
+  InstanceBootOptions,
   InstanceSnapshotOptions,
   InstanceGetOptions,
   InstanceStopOptions,
