@@ -1005,6 +1005,34 @@ class Instance {
     const instance = await this.client.instances.get({ instanceId: this.id });
     Object.assign(this, instance);
   }
+
+  /**
+   * Update the TTL (Time To Live) for the instance.
+   *
+   * This method allows you to reset the expiration time for an instance, which will be
+   * calculated as the current server time plus the provided TTL seconds.
+   *
+   * @param ttlSeconds New TTL in seconds.
+   * @param ttlAction Optional action to take when the TTL expires. Can be "stop" or "pause".
+   * If not provided, the current action will be maintained.
+   */
+  async setTtl(
+    ttlSeconds: number,
+    ttlAction?: "stop" | "pause"
+  ): Promise<void> {
+    const payload: { ttl_seconds: number; ttl_action?: "stop" | "pause" } = {
+      ttl_seconds: ttlSeconds,
+    };
+    if (ttlAction) {
+      payload.ttl_action = ttlAction;
+    }
+
+    // Makes a POST request to the /instance/{this.id}/ttl endpoint
+    await this.client.POST(`/instance/${this.id}/ttl`, {}, payload);
+
+    // Refreshes the instance data after the update
+    await this.refresh();
+  }
 }
 
 class MorphCloudClient {
