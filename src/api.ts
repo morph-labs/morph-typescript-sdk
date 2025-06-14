@@ -138,6 +138,18 @@ interface SyncOptions {
   respectGitignore?: boolean;
 }
 
+interface ContainerOptions {
+    image: string;
+    containerName?: string;
+    command?: string | string[];
+    containerArgs?: string[];
+    ports?: Record<number, number>;
+    volumes?: string[];
+    env?: Record<string, string>;
+    restartPolicy?: "no" | "on-failure" | "unless-stopped" | "always";
+}
+
+
 interface SFTPError extends Error {
   code?: string | number;
 }
@@ -1077,6 +1089,97 @@ class Instance {
 
     // Refreshes the instance data after the update
     await this.refresh();
+  }
+
+async asContainer(options: ContainerOptions): Promise<void> {
+    const {
+        image,
+        containerName = "container",
+        command = "tail -f /dev/null",
+        containerArgs = [],
+        ports = {},
+        volumes = [],
+        env = {},
+        restartPolicy = "unless-stopped",
+    } = options;
+    
+    const log = (message: string) => this.client.verbose && console.log(message);
+
+    await this.waitUntilReady();
+    log(`[Container] Instance ${this.id} is ready. Starting containerization...`);
+
+    const ssh = await this.ssh();
+    try {
+        log("[Container] Checking for required packages (docker.io)...");
+        const checkResult = await ssh.execCommand("dpkg -s docker.io");
+        if (checkResult.code !== 0) {
+            log("[Container] docker.io not found. Installing...");
+            const updateResult = await ssh.execCommand("apt-get update -y");
+            if (updateResult.code !== 0) throw new Error("Failed to update apt package lists.");
+            
+            const installResult = await ssh.execCommand("apt-get install -y docker.io");
+            if (installResult.code !== 0) throw new Error("Failed to install docker.io.");
+            log("[Container] docker.io installed successfully.");
+        }
+
+        log("[Container] Checking if Docker service is active...");
+        const dockerStatus = await ssh.execCommand("systemctl is-active docker");
+        if (dockerStatus.code !== 0) {
+            log("[Container] Docker service not active. Starting...");
+            const startResult = await ssh.execCommand("systemctl start docker.service");
+            if (startResult.code !== 0) throw new Error("Failed to start Docker service.");
+        }
+
+        const dockerCmd = ["docker", "run", "-d", "--name", containerName, "--network", "host", "--restart", restartPolicy];
+        Object.entries(ports).forEach(([host, container]) => dockerCmd.push("-p", `${host}:${container}`));
+        volumes.forEach((v: string) => dockerCmd.push("-v", v));
+        Object.entries(env).forEach(([key, value]) => dockerCmd.push("-e", `${key}=${value}`));
+        dockerCmd.push(...containerArgs);
+        dockerCmd.push(image);
+        if (typeof command === 'string') {
+            dockerCmd.push(...command.split(' '));
+        } else {
+            dockerCmd.push(...command);
+        }
+
+        log(`[Container] Running Docker command: ${dockerCmd.join(" ")}`);
+        const runResult = await ssh.execCommand(dockerCmd.join(" "));
+        if (runResult.code !== 0) {
+            throw new Error(`Failed to start container: ${runResult.stderr}`);
+        }
+        
+        const containerScript = `#!/bin/bash
+CONTAINER_NAME=${containerName}
+SHELL_TO_USE=$(docker exec "$CONTAINER_NAME" which bash || docker exec "$CONTAINER_NAME" which sh || echo "sh")
+if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
+    exec docker exec -it "$CONTAINER_NAME" "$SHELL_TO_USE"
+else
+    exec docker exec -i "$CONTAINER_NAME" "$SHELL_TO_USE" -c "$SSH_ORIGINAL_COMMAND"
+fi`;
+
+        log("[Container] Uploading SSH redirection script...");
+        // Using sftp.writeFile to upload buffer content directly.
+        const sftp = await ssh.requestSFTP();
+        await sftp.writeFile("/root/container.sh", Buffer.from(containerScript), { mode: 0o755 });
+
+        log("[Container] Configuring SSH daemon...");
+        const grepResult = await ssh.execCommand("grep -q '^ForceCommand' /etc/ssh/sshd_config");
+        if (grepResult.code === 0) {
+            await ssh.execCommand("sed -i 's|^ForceCommand.*|ForceCommand /root/container.sh|' /etc/ssh/sshd_config");
+        } else {
+            await ssh.execCommand("echo 'ForceCommand /root/container.sh' >> /etc/ssh/sshd_config");
+        }
+
+        log("[Container] Restarting SSH daemon...");
+        const restartResult = await ssh.execCommand("systemctl restart sshd");
+        if (restartResult.code !== 0) {
+            log("[Container] Warning: Non-zero exit code while restarting sshd. It may still work.");
+        }
+        log(`[Container] Instance ${this.id} successfully configured to redirect SSH to container '${containerName}'.`);
+
+    } finally {
+        ssh.dispose();
+    }
   }
 }
 
