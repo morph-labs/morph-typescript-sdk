@@ -367,6 +367,14 @@ class Snapshot {
       this.metadata![key] = value;
     });
   }
+
+  async asContainer(options: ContainerOptions): Promise<Snapshot> {
+    const _containerEffect = async (instance: Instance, opts: ContainerOptions) => {
+        await instance.asContainer(opts);
+    };
+
+    return this._cacheEffect(_containerEffect, options);
+  }
 }
 
 class Instance {
@@ -1412,4 +1420,5 @@ export type {
   InstanceSnapshotOptions,
   InstanceGetOptions,
   InstanceStopOptions,
+  ContainerOptions
 };
