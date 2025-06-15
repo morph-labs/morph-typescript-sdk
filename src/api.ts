@@ -1,6 +1,8 @@
 import * as crypto from "crypto";
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
+import micromatch from "micromatch";
+
 // Import the factory function from ignore
 const ignore = require("ignore");
 
@@ -152,6 +154,26 @@ interface ContainerOptions {
 
 interface SFTPError extends Error {
   code?: string | number;
+}
+
+interface CleanupOptions {
+  snapshotPattern?: string;
+  snapshotExcludePattern?: string;
+  servicePattern?: string;
+  serviceExcludePattern?: string;
+  excludePaused?: boolean;
+  action?: "stop" | "pause";
+  maxConcurrency?: number;
+  confirm?: boolean; // Note: Interactive confirmation is harder in a library. This is for logic parity.
+}
+
+interface CleanupResult {
+  success: boolean;
+  total: number;
+  processed: number;
+  failed: number;
+  kept: number;
+  errors: { instanceId: string; error: string }[];
 }
 
 class Image {
@@ -1394,6 +1416,136 @@ class MorphCloudClient {
         const response = await this.POST(`/snapshot/${snapshotId}/boot`, {}, body);
         return new Instance(response, this);
     },
+
+    /**
+     * Clean up instances based on various filtering criteria.
+     * @param options - Filtering and action options for the cleanup operation.
+     * @returns A result object summarizing the cleanup operation.
+     */
+   cleanup: async (options: CleanupOptions = {}): Promise<CleanupResult> => {
+      const {
+        snapshotPattern,
+        snapshotExcludePattern,
+        servicePattern,
+        serviceExcludePattern,
+        excludePaused = true,
+        action = "stop",
+        maxConcurrency = 10,
+      } = options;
+
+      const log = (message: string) => this.verbose && console.log(message);
+
+      log(`[Cleanup] Starting instance cleanup. Action: ${action}`);
+
+      const allInstances = await this.instances.list();
+      log(`[Cleanup] Found ${allInstances.length} total instances.`);
+
+      if (allInstances.length === 0) {
+        return { success: true, total: 0, processed: 0, failed: 0, kept: 0, errors: [] };
+      }
+
+      const instancesToProcess: Instance[] = [];
+      const instancesToKeep: Instance[] = [];
+
+      for (const instance of allInstances) {
+        let shouldProcess = true;
+        const reasonsToKeep: string[] = [];
+
+        // Filter by status
+        if (action === "stop" && ![InstanceStatus.READY, InstanceStatus.PAUSED].includes(instance.status)) {
+            shouldProcess = false;
+            reasonsToKeep.push(`status is ${instance.status} (not ready or paused)`);
+        } else if (action === "pause" && instance.status !== InstanceStatus.READY) {
+            shouldProcess = false;
+            reasonsToKeep.push(`status is ${instance.status} (not ready)`);
+        }
+
+        if (excludePaused && instance.status === InstanceStatus.PAUSED) {
+            shouldProcess = false;
+            reasonsToKeep.push("instance is paused");
+        }
+        
+        // Filter by snapshot patterns
+        const snapshotId = instance.refs.snapshotId;
+        if (snapshotPattern && !micromatch.isMatch(snapshotId, snapshotPattern)) {
+            shouldProcess = false;
+            reasonsToKeep.push("snapshot ID does not match include pattern");
+        }
+        if (snapshotExcludePattern && micromatch.isMatch(snapshotId, snapshotExcludePattern)) {
+            shouldProcess = false;
+            reasonsToKeep.push("snapshot ID matches exclude pattern");
+        }
+
+        // Filter by service patterns
+        const serviceNames = instance.networking.httpServices.map(s => s.name);
+        if (servicePattern && serviceNames.some(name => micromatch.isMatch(name, servicePattern))) {
+            shouldProcess = false;
+            reasonsToKeep.push("has a service matching the keep pattern");
+        }
+        if (serviceExcludePattern && serviceNames.some(name => micromatch.isMatch(name, serviceExcludePattern))) {
+            shouldProcess = false;
+            reasonsToKeep.push("has a service matching the exclude pattern");
+        }
+        
+        if (shouldProcess) {
+            instancesToProcess.push(instance);
+        } else {
+            instancesToKeep.push(instance);
+            log(`[Cleanup] Keeping instance ${instance.id}: ${reasonsToKeep.join(", ")}`);
+        }
+      }
+
+      log(`[Cleanup] Summary: ${instancesToProcess.length} to ${action}, ${instancesToKeep.length} to keep.`);
+
+      if (instancesToProcess.length === 0) {
+        return { success: true, total: allInstances.length, processed: 0, failed: 0, kept: instancesToKeep.length, errors: [] };
+      }
+      
+      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+      // FIXED: Corrected error handling logic.
+      // Removed the try/catch from the map to let Promise.allSettled
+      // correctly report rejections.
+      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+      const results = await Promise.allSettled(
+        instancesToProcess.map(async (instance) => {
+          log(`[Cleanup] Processing instance ${instance.id}...`);
+          if (action === "stop") {
+            await instance.stop();
+          } else {
+            await instance.pause();
+          }
+          // On success, return the instanceId for the report
+          return { instanceId: instance.id };
+        })
+      );
+      
+      const finalReport: CleanupResult = {
+        success: true,
+        total: allInstances.length,
+        processed: 0,
+        failed: 0,
+        kept: instancesToKeep.length,
+        errors: [],
+      };
+
+      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+      // FIXED: Correctly process the results from Promise.allSettled.
+      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+      results.forEach((res, index) => {
+        if (res.status === 'fulfilled') {
+            finalReport.processed++;
+        } else { // res.status is 'rejected'
+            finalReport.failed++;
+            finalReport.success = false;
+            const instanceId = instancesToProcess[index].id;
+            const error = res.reason?.message || 'Unknown error';
+            finalReport.errors.push({ instanceId, error });
+        }
+      });
+      
+      log(`[Cleanup] Complete. Processed: ${finalReport.processed}, Failed: ${finalReport.failed}`);
+      return finalReport;
+    },
   };
 }
 
@@ -1420,5 +1572,6 @@ export type {
   InstanceSnapshotOptions,
   InstanceGetOptions,
   InstanceStopOptions,
-  ContainerOptions
+  ContainerOptions,
+  CleanupOptions
 };
