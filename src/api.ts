@@ -1098,6 +1098,11 @@ class Instance {
     await this.sync(source, localPath, options);
   }
 
+  //Ensure an instance is automatically stopped when it goes out of scope
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.stop();
+  }
+
   /**
    * Update the TTL (Time To Live) for the instance.
    *
