@@ -1501,11 +1501,6 @@ class MorphCloudClient {
         return { success: true, total: allInstances.length, processed: 0, failed: 0, kept: instancesToKeep.length, errors: [] };
       }
       
-      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-      // FIXED: Corrected error handling logic.
-      // Removed the try/catch from the map to let Promise.allSettled
-      // correctly report rejections.
-      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
       const results = await Promise.allSettled(
         instancesToProcess.map(async (instance) => {
           log(`[Cleanup] Processing instance ${instance.id}...`);
@@ -1528,9 +1523,6 @@ class MorphCloudClient {
         errors: [],
       };
 
-      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-      // FIXED: Correctly process the results from Promise.allSettled.
-      // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
       results.forEach((res, index) => {
         if (res.status === 'fulfilled') {
             finalReport.processed++;

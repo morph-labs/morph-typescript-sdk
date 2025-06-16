@@ -29,7 +29,8 @@
     "test:esm": "node test/test-esm.js",
     "test:bun": "bun test/test-bun.ts",
     "test:bunts": "bun test/test-bunts.ts",
-    "test:integration": "npm run build && jest --config jest.config.cjs"
+    "test:integration": "npm run build && jest --config jest.config.cjs",
+    "test:unit": "npm run build && jest --config jest.config.cjs"
   },
   "type": "module",
   "repository": {
@@ -44,6 +45,7 @@
   "homepage": "https://github.com/morph-labs/morph-typescript-sdk#readme",
   "devDependencies": {
     "@types/jest": "^29.5.14",
+    "@types/micromatch": "^4.0.9",
     "@types/node": "^22.10.2",
     "@types/ssh2": "^1.15.1",
     "jest": "^29.7.0",
@@ -53,6 +55,7 @@
   },
   "dependencies": {
     "ignore": "^7.0.0",
+    "micromatch": "^4.0.8",
     "node-ssh": "^13.2.0",
     "uuid": "^11.1.0"
   }
