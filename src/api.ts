@@ -464,6 +464,11 @@ class Instance {
     return new Snapshot(response, this.client);
   }
 
+  async reboot(): Promise<void> {
+    await this.client.POST(`/instance/${this.id}/reboot`);
+    await this.refresh();
+  }
+
   async branch(count: number): Promise<{
     snapshot: Snapshot;
     instances: Instance[];
