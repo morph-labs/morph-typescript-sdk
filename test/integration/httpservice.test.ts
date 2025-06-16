@@ -1,6 +1,6 @@
-// tests/integration/branching.test.ts
-
 import { MorphCloudClient, Instance, Snapshot, Image } from "morphcloud";
+
+jest.setTimeout(60000);
 
 describe("Instance Branching", () => {
   let client: MorphCloudClient;
@@ -30,7 +30,7 @@ describe("Instance Branching", () => {
       imageId: baseImage.id,
       vcpus: 1,
       memory: 512,
-      diskSize: 1024,
+      diskSize: 8192,
     });
     resources.snapshots.push(initialSnapshot.id);
 

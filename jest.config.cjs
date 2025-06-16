@@ -7,4 +7,7 @@ module.exports = {
       tsconfig: "tsconfig.json",
     },
   },
+  moduleNameMapper: {
+    '^morphcloud$': '<rootDir>/src/api.ts',
+  },
 };
