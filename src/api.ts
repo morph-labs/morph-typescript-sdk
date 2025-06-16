@@ -390,6 +390,44 @@ class Snapshot {
     });
   }
 
+  /**
+   * Creates a new snapshot by uploading a local file or directory to it.
+   * Uses caching to return an existing snapshot if the same operation was performed before.
+   * @param localPath The path to the local file or directory.
+   * @param remotePath The destination path on the snapshot.
+   * @param options Sync options.
+   * @returns A new snapshot with the uploaded content.
+   */
+  async upload(localPath: string, remotePath: string, options: SyncOptions = {}): Promise<Snapshot> {
+      const _uploadEffect = async (instance: Instance, lPath: string, rPath: string, opts: SyncOptions) => {
+          await instance.upload(lPath, rPath, opts);
+      };
+      return this._cacheEffect(_uploadEffect, localPath, remotePath, options);
+  }
+
+  // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  // NEW: Download method for Snapshot
+  // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  /**
+   * Downloads a file or directory from the snapshot.
+   * Note: This operation does not create a new snapshot, but it uses the caching
+   * mechanism to potentially find an existing state. This method is primarily
+   * for data extraction and inspection.
+   * @param remotePath The path of the file or directory on the snapshot.
+   * @param localPath The local destination path.
+   * @param options Sync options.
+   */
+  async download(remotePath: string, localPath: string, options: SyncOptions = {}): Promise<void> {
+    // This is not a mutating operation, so we just run the effect on a temporary instance
+    const instance = await this.client.instances.start({ snapshotId: this.id });
+    try {
+        await instance.waitUntilReady(300);
+        await instance.download(remotePath, localPath, options);
+    } finally {
+        await instance.stop();
+    }
+  }
+
   async asContainer(options: ContainerOptions): Promise<Snapshot> {
     const _containerEffect = async (instance: Instance, opts: ContainerOptions) => {
         await instance.asContainer(opts);
@@ -1131,7 +1169,8 @@ class Instance {
     await this.refresh();
   }
 
-async asContainer(options: ContainerOptions): Promise<void> {
+
+  async asContainer(options: ContainerOptions): Promise<void> {
     const {
         image,
         containerName = "container",
