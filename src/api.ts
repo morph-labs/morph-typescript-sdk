@@ -129,6 +129,25 @@ interface SyncOptions {
   respectGitignore?: boolean;
 }
 
+interface ContainerOptions {
+  // Either use an existing image OR provide a Dockerfile
+  image?: string;
+  dockerfile?: string;
+  buildContext?: string; // Path to build context directory on the remote instance
+  
+  // Container configuration
+  containerName?: string;
+  command?: string | string[];
+  containerArgs?: string[];
+  ports?: Record<number, number>; // host_port: container_port
+  volumes?: string[];
+  env?: Record<string, string>;
+  restartPolicy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+}
+
+
+
+
 interface SFTPError extends Error {
   code?: string | number;
 }
@@ -464,7 +483,12 @@ class Instance {
       {},
       { command: cmd }
     );
-    return response;
+    
+    return {
+      exitCode: response.exit_code,
+      stdout: response.stdout,
+      stderr: response.stderr,
+    };
   }
 
   async waitUntilReady(timeout?: number): Promise<void> {
@@ -1000,6 +1024,237 @@ class Instance {
     const instance = await this.client.instances.get({ instanceId: this.id });
     Object.assign(this, instance);
   }
+
+  // Fixed asContainer method - should be called as instance.asContainer(options)
+  async asContainer(options: ContainerOptions): Promise<void> {
+    const {
+      image,
+      dockerfile,
+      buildContext,
+      containerName = "container",
+      containerArgs = [],
+      ports = {},
+      volumes = [],
+      env = {},
+      restartPolicy = "unless-stopped",
+    } = options;
+    
+    const log = (message: string) => console.log(`[Container] ${message}`);
+
+    // Validation: must provide either image or dockerfile
+    if (!image && !dockerfile) {
+      throw new Error("Either 'image' or 'dockerfile' must be provided");
+    }
+
+    log(`Starting containerization for instance ${this.id}...`);
+
+    let finalImageName: string;
+
+    if (dockerfile) {
+      // Build custom image from Dockerfile using the EXACT working approach
+      log("Building Docker image from Dockerfile...");
+      
+      // Generate unique image name if not provided
+      if (!image) {
+        const crypto = require('crypto');
+        const dockerfileHash = crypto.createHash('sha256').update(dockerfile).digest('hex').substring(0, 12);
+        finalImageName = `morphcloud-custom:${dockerfileHash}`;
+      } else {
+        finalImageName = image;
+      }
+
+      // Check if image already exists
+      const checkResult = await this.exec(`docker images -q ${finalImageName}`);
+      if (checkResult.exitCode === 0 && checkResult.stdout.trim()) {
+        log(`Image '${finalImageName}' already exists, skipping build`);
+      } else {
+        // Set up build context - use provided path or create temp directory
+        const buildDir = buildContext || "/tmp/docker-build";
+        log(`Using build directory: ${buildDir}`);
+        
+        const mkdirResult = await this.exec(`mkdir -p ${buildDir}`);
+        if (mkdirResult.exitCode !== 0) {
+          throw new Error(`Failed to create build context directory: ${mkdirResult.stderr}`);
+        }
+
+        try {
+          // Write Dockerfile using the EXACT working approach
+          log(`Writing Dockerfile to ${buildDir}/Dockerfile`);
+          const writeCmd = `cat > ${buildDir}/Dockerfile << 'EOF'
+${dockerfile}
+EOF`;
+          
+          const writeResult = await this.exec(writeCmd);
+          if (writeResult.exitCode !== 0) {
+            throw new Error(`Failed to write Dockerfile: ${writeResult.stderr}`);
+          }
+
+          // Verify Dockerfile was written correctly
+          const verifyResult = await this.exec(`cat ${buildDir}/Dockerfile | head -5`);
+          log(`Dockerfile preview:\n${verifyResult.stdout}`);
+
+          // Build the Docker image using the EXACT working approach
+          log(`Building image '${finalImageName}'...`);
+          const buildCmd = `cd ${buildDir} && docker build -t ${finalImageName} .`;
+          
+          const buildResult = await this.exec(buildCmd);
+          if (buildResult.exitCode !== 0) {
+            // Show full error details
+            const errorDetails = `
+BUILD FAILED:
+Exit code: ${buildResult.exitCode}
+
+STDOUT:
+${buildResult.stdout}
+
+STDERR:
+${buildResult.stderr}
+`;
+            throw new Error(`Failed to build Docker image: ${errorDetails}`);
+          }
+
+          log(`Successfully built image '${finalImageName}'`);
+
+        } finally {
+          // Clean up build directory if we created it
+          if (!buildContext) {
+            await this.exec(`rm -rf ${buildDir}`);
+            log(`Cleaned up build directory ${buildDir}`);
+          }
+        }
+      }
+    } else {
+      // Use existing image
+      finalImageName = image!;
+      
+      log(`Checking if image '${image}' exists locally...`);
+      const checkResult = await this.exec(`docker images -q ${image}`);
+      
+      if (!checkResult.stdout.trim()) {
+        log(`Image '${image}' not found locally, pulling...`);
+        const pullResult = await this.exec(`docker pull ${image}`);
+        if (pullResult.exitCode !== 0) {
+          throw new Error(`Failed to pull Docker image '${image}': ${pullResult.stderr}`);
+        }
+        log(`Successfully pulled image '${image}'`);
+      } else {
+        log(`Image '${image}' found locally`);
+      }
+    }
+
+    // Stop and remove existing container if it exists
+    log(`Cleaning up any existing container: ${containerName}`);
+    await this.exec(`docker stop ${containerName} 2>/dev/null || true`);
+    await this.exec(`docker rm ${containerName} 2>/dev/null || true`);
+
+    // Build docker run command
+    const dockerCmd = [
+      "docker", "run", "-d", 
+      "--name", containerName, 
+      "--network", "host", 
+      "--entrypoint=''",
+      `--restart=${restartPolicy}`
+    ];
+
+    // Add port mappings
+    Object.entries(ports).forEach(([hostPort, containerPort]) => {
+      dockerCmd.push("-p", `${hostPort}:${containerPort}`);
+    });
+
+    // Add volume mounts
+    volumes.forEach(volume => {
+      dockerCmd.push("-v", volume);
+    });
+
+    // Add environment variables
+    Object.entries(env).forEach(([key, value]) => {
+      dockerCmd.push("-e", `${key}=${value}`);
+    });
+
+    // Add additional arguments
+    dockerCmd.push(...containerArgs);
+
+    // Add image and keep-alive command
+    dockerCmd.push(finalImageName, "tail", "-f", "/dev/null");
+
+    // Start the container
+    log(`Starting container '${containerName}' from image '${finalImageName}'...`);
+    log(`Docker command: ${dockerCmd.join(' ')}`);
+    
+    const runResult = await this.exec(dockerCmd.join(' '));
+    if (runResult.exitCode !== 0) {
+      throw new Error(`Failed to start container: ${runResult.stderr}`);
+    }
+
+    // Check if container is running
+    const statusResult = await this.exec(`docker inspect ${containerName} --format "{{.State.Status}}"`);
+    if (statusResult.exitCode !== 0 || statusResult.stdout.trim() !== "running") {
+      // Get debugging info
+      const logsResult = await this.exec(`docker logs --tail=20 ${containerName}`);
+      const psResult = await this.exec(`docker ps -a --filter name=${containerName}`);
+      
+      const errorMsg = `Container '${containerName}' is not running properly.
+Status: ${statusResult.stdout.trim() || 'unknown'}
+
+Container info:
+${psResult.stdout || 'Could not get container info'}
+
+Recent logs:
+${logsResult.stdout || 'Could not get logs'}`;
+
+      throw new Error(errorMsg);
+    }
+
+    // Test shell availability
+    const shellTestResult = await this.exec(`docker exec ${containerName} echo test`);
+    if (shellTestResult.exitCode !== 0) {
+      log("Warning: Container is running but not responsive to commands");
+    } else {
+      log("Container is running and responsive");
+    }
+
+    // Create SSH redirection script (simplified version)
+    const containerScript = `#!/bin/bash
+CONTAINER_NAME=${containerName}
+
+# Simple shell detection
+SHELL_TO_USE="bash"
+if ! docker exec "$CONTAINER_NAME" which bash >/dev/null 2>&1; then
+    SHELL_TO_USE="sh"
+fi
+
+# Execute command in container
+if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
+    exec docker exec -it "$CONTAINER_NAME" "$SHELL_TO_USE"
+else
+    exec docker exec "$CONTAINER_NAME" "$SHELL_TO_USE" -c "$SSH_ORIGINAL_COMMAND"
+fi`;
+
+    // Write the container script
+    log("Installing container redirection script...");
+    const scriptWriteCmd = `cat > /root/container.sh << 'EOF'
+${containerScript}
+EOF`;
+    
+    await this.exec(scriptWriteCmd);
+    await this.exec('chmod +x /root/container.sh');
+
+    // Update SSH configuration
+    log("Configuring SSH to redirect to container...");
+    const grepResult = await this.exec("grep -q '^ForceCommand' /etc/ssh/sshd_config");
+    
+    if (grepResult.exitCode === 0) {
+      await this.exec("sed -i 's|^ForceCommand.*|ForceCommand /root/container.sh|' /etc/ssh/sshd_config");
+    } else {
+      await this.exec("echo 'ForceCommand /root/container.sh' >> /etc/ssh/sshd_config");
+    }
+
+    // Restart SSH service
+    log("Restarting SSH service...");
+    await this.exec("systemctl restart sshd");
+
+    log(`✅ Instance successfully configured to redirect SSH to container '${containerName}'`);
+  }
 }
 
 class MorphCloudClient {
@@ -1217,4 +1472,5 @@ export type {
   InstanceSnapshotOptions,
   InstanceGetOptions,
   InstanceStopOptions,
+  ContainerOptions
 };
