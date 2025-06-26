@@ -1,9 +1,10 @@
 {
   "name": "morphcloud",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
   "files": [
     "dist",
     "src"
@@ -11,11 +12,11 @@
   "exports": {
     ".": {
       "import": {
-        "types": "./dist/index.d.ts",
+        "types": "./dist/index.d.mts",
         "default": "./dist/index.mjs"
       },
       "require": {
-        "types": "./dist/index.d.ts",
+        "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
     }
@@ -30,7 +31,6 @@
     "test:bun": "bun test/test-bun.ts",
     "test:bunts": "bun test/test-bunts.ts"
   },
-  "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/morph-labs/morph-typescript-sdk.git"
