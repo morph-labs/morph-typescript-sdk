@@ -122,6 +122,24 @@ interface InstanceStopOptions {
   instanceId: string;
 }
 
+interface SSHKeyRotationOptions {
+  publicKey: string;
+  privateKey: string;
+  validateConnection?: boolean;
+  timeout?: number;
+  removeOldKeys?: boolean;
+  auditLog?: boolean;
+}
+
+interface SSHKeyRotationResult {
+  success: boolean;
+  keyFingerprint: string;
+  rotatedAt: Date;
+  validationPassed?: boolean;
+  oldKeysRemoved?: boolean;
+  auditLogged?: boolean;
+}
+
 interface SyncOptions {
   delete?: boolean;
   dryRun?: boolean;
@@ -491,6 +509,78 @@ class Instance {
       username: `${this.id}:${this.client.apiKey}`,
       privateKey: SSH_TEMP_KEYPAIR.privateKey,
     });
+  }
+
+  async rotateSSHKey(options: SSHKeyRotationOptions): Promise<SSHKeyRotationResult> {
+    const crypto = await import("crypto");
+    
+    // Validate SSH key format
+    if (!options.publicKey.includes("BEGIN PUBLIC KEY") || 
+        !options.privateKey.includes("BEGIN RSA PRIVATE KEY")) {
+      throw new Error("Invalid SSH key format. Keys must be in PEM format.");
+    }
+
+    try {
+      // Generate key fingerprint for tracking
+      const keyFingerprint = crypto
+        .createHash("md5")
+        .update(options.publicKey)
+        .digest("hex")
+        .replace(/(.{2})/g, "$1:")
+        .slice(0, -1);
+
+      // Send rotation request to API
+      const rotationData = {
+        public_key: options.publicKey,
+        private_key: options.privateKey,
+        validate_connection: options.validateConnection || false,
+        timeout: options.timeout || 30,
+        remove_old_keys: options.removeOldKeys || false,
+        audit_log: options.auditLog || false,
+      };
+
+      const response = await this.client.POST(
+        `/instance/${this.id}/ssh/rotate`,
+        {},
+        rotationData
+      );
+
+      const result: SSHKeyRotationResult = {
+        success: response.success || true,
+        keyFingerprint: keyFingerprint,
+        rotatedAt: new Date(),
+        validationPassed: response.validation_passed,
+        oldKeysRemoved: response.old_keys_removed,
+        auditLogged: response.audit_logged,
+      };
+
+      // If validation is requested, test the connection
+      if (options.validateConnection) {
+        try {
+          const testSsh = new NodeSSH();
+          await testSsh.connect({
+            host: process.env.MORPH_SSH_HOSTNAME || MORPH_SSH_HOSTNAME,
+            port: process.env.MORPH_SSH_PORT
+              ? parseInt(process.env.MORPH_SSH_PORT)
+              : MORPH_SSH_PORT,
+            username: `${this.id}:${this.client.apiKey}`,
+            privateKey: options.privateKey,
+          });
+
+          // Test basic command execution
+          const testResult = await testSsh.execCommand("echo 'connection-test'");
+          result.validationPassed = testResult.code === 0;
+          testSsh.dispose();
+        } catch (error) {
+          result.validationPassed = false;
+          throw new Error(`SSH key rotation validation failed: ${error}`);
+        }
+      }
+
+      return result;
+    } catch (error) {
+      throw new Error(`SSH key rotation failed: ${error}`);
+    }
   }
 
   async sync(
@@ -1217,4 +1307,6 @@ export type {
   InstanceSnapshotOptions,
   InstanceGetOptions,
   InstanceStopOptions,
+  SSHKeyRotationOptions,
+  SSHKeyRotationResult,
 };
