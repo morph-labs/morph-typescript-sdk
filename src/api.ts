@@ -72,6 +72,17 @@ interface InstanceExecResponse {
   stderr: string;
 }
 
+interface InstanceSshKey {
+  /** Object type, always 'instance_ssh_key' */
+  object: "instance_ssh_key";
+  /** SSH private key */
+  private_key: string;
+  /** SSH public key */
+  public_key: string;
+  /** SSH password */
+  password: string;
+}
+
 interface MorphCloudClientOptions {
   apiKey?: string;
   baseUrl?: string;
@@ -996,6 +1007,32 @@ class Instance {
     }
   }
 
+  /**
+   * Get the SSH key details for this instance.
+   * 
+   * Returns the current SSH key information including private key, public key, and password
+   * that can be used to establish SSH connections to the instance.
+   * 
+   * @returns Promise resolving to SSH key details
+   */
+  async sshKey(): Promise<InstanceSshKey> {
+    const response = await this.client.GET(`/instance/${this.id}/ssh/key`);
+    return response as InstanceSshKey;
+  }
+
+  /**
+   * Rotate (regenerate) the SSH key for this instance.
+   * 
+   * This generates a new ephemeral SSH key for establishing connections.
+   * The old SSH key will be invalidated and replaced with the new one.
+   * 
+   * @returns Promise resolving to new SSH key details
+   */
+  async sshKeyRotate(): Promise<InstanceSshKey> {
+    const response = await this.client.POST(`/instance/${this.id}/ssh/key`);
+    return response as InstanceSshKey;
+  }
+
   private async refresh(): Promise<void> {
     const instance = await this.client.instances.get({ instanceId: this.id });
     Object.assign(this, instance);
@@ -1194,7 +1231,7 @@ class MorphCloudClient {
   };
 }
 
-export { MorphCloudClient };
+export { MorphCloudClient, Instance, Snapshot, Image };
 export { InstanceStatus, SnapshotStatus };
 export type {
   MorphCloudClientOptions,
@@ -1204,9 +1241,7 @@ export type {
   InstanceNetworking,
   InstanceRefs,
   InstanceExecResponse,
-  Snapshot,
-  Instance,
-  Image,
+  InstanceSshKey,
   SyncOptions,
   SnapshotCreateOptions,
   SnapshotGetOptions,

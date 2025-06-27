@@ -21,6 +21,9 @@
     "prepare": "npm run build",
     "clean": "rm -rf dist",
     "prebuild": "npm run clean",
+    "test": "jest",
+    "test:integration": "jest test/integration",
+    "test:ssh": "jest test/integration/sshkeyrotation.test.ts",
     "test:cjs": "node test/test-cjs.cjs",
     "test:esm": "node test/test-esm.js",
     "test:bun": "bun test/test-bun.ts",
@@ -37,9 +40,12 @@
   },
   "homepage": "https://github.com/morph-labs/morph-typescript-sdk#readme",
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^22.10.2",
     "@types/ssh2": "^1.15.1",
     "@types/uuid": "^10.0.0",
+    "jest": "^30.0.3",
+    "ts-jest": "^29.4.0",
     "tsup": "^8.0.0",
     "typescript": "^5.7.2"
   },
