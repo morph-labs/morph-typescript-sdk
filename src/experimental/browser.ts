@@ -216,7 +216,7 @@ export class BrowserSession {
     // Fallback to internal method if external doesn't work
     if (!connectUrl) {
       const versionResult = await instance.exec("curl -s http://localhost:80/json/version");
-      if (versionResult.exitCode === 0) {
+      if (versionResult.exit_code === 0) {
         try {
           const versionData = JSON.parse(versionResult.stdout);
           if (verbose) {
@@ -249,7 +249,7 @@ export class BrowserSession {
       // If browser-level URL not found, try to get page-level URLs from /json
       if (!connectUrl) {
         const internalTabs = await instance.exec("curl -s http://localhost:80/json");
-        if (internalTabs.exitCode === 0) {
+        if (internalTabs.exit_code === 0) {
           try {
             const tabsData = JSON.parse(internalTabs.stdout);
             if (verbose) {
@@ -406,7 +406,7 @@ export class BrowserSession {
         console.log("Verifying Chrome installation...");
       }
       const result = await instance.exec("google-chrome --version");
-      if (result.exitCode !== 0) {
+      if (result.exit_code !== 0) {
         throw new Error(`Chrome not properly installed: ${result.stderr}`);
       }
       if (verbose) {
@@ -450,7 +450,7 @@ export class BrowserSession {
       for (let i = 0; i < CHROME_STARTUP_TIMEOUT; i++) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         const result = await instance.exec(`curl -s http://localhost:${CHROME_CDP_PORT}/json/version 2>/dev/null`);
-        if (result.exitCode === 0) {
+        if (result.exit_code === 0) {
           try {
             const versionData = JSON.parse(result.stdout);
             if (versionData.Browser) {
@@ -480,7 +480,7 @@ export class BrowserSession {
         console.log("Creating initial page via CDP...");
       }
       const createPageResult = await instance.exec(`curl -s -X PUT "http://localhost:${CHROME_CDP_PORT}/json/new?about:blank"`);
-      if (createPageResult.exitCode === 0) {
+      if (createPageResult.exit_code === 0) {
         if (verbose) {
           console.log("Initial page created successfully");
         }
@@ -496,7 +496,7 @@ export class BrowserSession {
       for (let i = 0; i < PROXY_STARTUP_TIMEOUT; i++) {
         await new Promise(resolve => setTimeout(resolve, 1000));
         const caddyTest = await instance.exec("curl -s http://localhost:80/health");
-        if (caddyTest.exitCode === 0 && caddyTest.stdout.includes("Browser Session Active")) {
+        if (caddyTest.exit_code === 0 && caddyTest.stdout.includes("Browser Session Active")) {
           if (verbose) {
             console.log(`Caddy ready after ${i + 1}s`);
           }

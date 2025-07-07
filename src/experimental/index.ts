@@ -571,3 +571,6 @@ export class Snapshot {
 
 // Export the client for compatibility
 export const client = new MorphCloudClient();
+
+// Re-export browser functionality
+export { MorphBrowser, BrowserSession, SessionManager } from './browser.js';
