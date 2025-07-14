@@ -1071,14 +1071,20 @@ class MorphCloudClient {
     });
 
     if (!response.ok) {
-      let errorBody;
+      const raw = await response.text();
+      
+      let errorBody: unknown;
       try {
-        errorBody = await response.json();
+        errorBody = JSON.parse(raw);
       } catch {
-        errorBody = await response.text();
+        errorBody = raw;
       }
+      
       throw new Error(
-        `HTTP Error ${response.status} for url '${response.url}'\nResponse Body: ${JSON.stringify(errorBody, null, 2)}`
+        `HTTP ${response.status} ${response.statusText} for ${response.url}\n` +
+        `Response Body: ${typeof errorBody === "string"
+           ? errorBody
+           : JSON.stringify(errorBody, null, 2)}`
       );
     }
     try {
