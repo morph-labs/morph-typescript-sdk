@@ -67,7 +67,7 @@ interface InstanceRefs {
 }
 
 interface InstanceExecResponse {
-  exitCode: number;
+  exit_code: number;
   stdout: string;
   stderr: string;
 }
