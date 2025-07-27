@@ -1,6 +1,7 @@
 import * as crypto from "crypto";
 import { generateKeyPairSync } from "crypto";
 import { NodeSSH } from "node-ssh";
+import { Agent } from "undici";
 // Import the factory function from ignore
 const ignore = require("ignore");
 
@@ -10,6 +11,12 @@ type PathModule = typeof import("path");
 const MORPH_BASE_URL = "https://cloud.morph.so/api";
 const MORPH_SSH_HOSTNAME = "ssh.cloud.morph.so";
 const MORPH_SSH_PORT = 22;
+
+// Long operation dispatcher for exec commands (24 hour timeout)
+const execDispatcher = new Agent({
+  headersTimeout: 24 * 60 * 60 * 1000, // 24 hours
+  bodyTimeout: 0                        // No body timeout
+});
 
 const SSH_TEMP_KEYPAIR = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -1060,7 +1067,13 @@ class MorphCloudClient {
     if (query) {
       uri.search = new URLSearchParams(query).toString();
     }
-    const response = await fetch(uri, {
+
+    // Use 24-hour timeout for exec commands, 10-minute for everything else
+    const isExecCommand = endpoint.includes('/exec');
+    const timeout = isExecCommand ? 24 * 60 * 60 * 1000 : 600000; // 24 hours vs 10 minutes
+    const dispatcher = isExecCommand ? execDispatcher : undefined;
+
+    const fetchOptions: any = {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -1068,7 +1081,15 @@ class MorphCloudClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: data ? JSON.stringify(data) : undefined,
-    });
+      signal: AbortSignal.timeout(timeout),
+    };
+
+    // Add dispatcher for exec commands (TypeScript doesn't know about this property)
+    if (dispatcher) {
+      fetchOptions.dispatcher = dispatcher;
+    }
+
+    const response = await fetch(uri, fetchOptions);
 
     if (!response.ok) {
       const raw = await response.text();
