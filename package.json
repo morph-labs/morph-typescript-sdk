@@ -52,6 +52,7 @@
   "dependencies": {
     "ignore": "^7.0.0",
     "node-ssh": "^13.2.0",
+    "undici": "^7.12.0",
     "uuid": "^11.1.0"
   }
 }
