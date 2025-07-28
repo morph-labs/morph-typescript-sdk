@@ -125,6 +125,7 @@ interface InstanceStartOptions {
   metadata?: Record<string, string>;
   ttlSeconds?: number;
   ttlAction?: "stop" | "pause";
+  timeout?: number;
 }
 
 interface InstanceSnapshotOptions {
@@ -1224,7 +1225,7 @@ class MorphCloudClient {
     },
 
     start: async (options: InstanceStartOptions): Promise<Instance> => {
-      const { snapshotId, metadata, ttlSeconds, ttlAction } = options;
+      const { snapshotId, metadata, ttlSeconds, ttlAction, timeout } = options;
 
       // Build query parameters
       const queryParams = {
@@ -1244,7 +1245,36 @@ class MorphCloudClient {
       }
 
       const response = await this.POST("/instance", queryParams, body);
-      return new Instance(response, this);
+      const instance = new Instance(response, this);
+
+      // Handle timeout parameter - automatic waiting logic
+      if (timeout !== undefined) {
+        try {
+          // Convert timeout=0 to undefined for indefinite wait (matches Python behavior)
+          const timeoutVal = timeout === 0 ? undefined : timeout;
+          await instance.waitUntilReady(timeoutVal);
+        } catch (error) {
+          // Log error and attempt cleanup
+          if (this.verbose) {
+            console.error(`Failed to start instance ${instance.id} with timeout: ${error}`);
+          }
+          
+          try {
+            await instance.stop();
+          } catch (cleanupError) {
+            if (this.verbose) {
+              console.error(`Failed to cleanup instance ${instance.id}: ${cleanupError}`);
+            }
+            // Re-throw cleanup error if cleanup fails
+            throw cleanupError;
+          }
+          
+          // Re-throw original error if cleanup succeeds
+          throw error;
+        }
+      }
+
+      return instance;
     },
 
     get: async (options: InstanceGetOptions): Promise<Instance> => {
