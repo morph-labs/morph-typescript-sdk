@@ -1,6 +1,6 @@
 {
   "name": "morphcloud",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "description": "A Typescript SDK for creating, managing, and interacting with Morph Cloud VMs.",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
