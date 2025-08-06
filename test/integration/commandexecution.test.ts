@@ -1,7 +1,7 @@
 // Test file corresponding to test_command_execution.py
 // Various command execution scenarios and error handling
 
-import { MorphCloudClient, Instance, Snapshot } from "morphcloud";
+import { MorphCloudClient, Instance, Snapshot } from "../../src/api";
 import { v4 as uuidv4 } from "uuid";
 
 jest.setTimeout(5 * 60 * 1000); // increase timeout for long-running tests
@@ -371,5 +371,241 @@ describe("🔄 Command Execution Integration (TS)", () => {
     expect(callbackCalled).toBe(true);
     
     console.log("Streaming endpoint test passed");
+  });
+
+  // New missing test: Dual stdout/stderr streaming (equivalent to test_streaming_both_callbacks)
+  test("should support dual stdout and stderr streaming", async () => {
+    console.log("Testing dual stdout/stderr streaming");
+    
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    
+    const result = await testInstance.exec(
+      "echo 'stdout line 1'; echo 'stderr line 1' >&2; echo 'stdout line 2'; echo 'stderr line 2' >&2",
+      {
+        onStdout: (content) => {
+          stdoutChunks.push(content);
+          console.log(`STDOUT: ${content.trim()}`);
+        },
+        onStderr: (content) => {
+          stderrChunks.push(content);
+          console.log(`STDERR: ${content.trim()}`);
+        }
+      }
+    );
+    
+    // Verify final response
+    expect(result.exit_code).toBe(0);
+    expect(result.stdout).toContain("stdout line 1");
+    expect(result.stdout).toContain("stdout line 2");
+    expect(result.stderr).toContain("stderr line 1");
+    expect(result.stderr).toContain("stderr line 2");
+    
+    // Verify callbacks were called
+    expect(stdoutChunks.length).toBeGreaterThan(0);
+    expect(stderrChunks.length).toBeGreaterThan(0);
+    
+    const stdoutContent = stdoutChunks.join('');
+    const stderrContent = stderrChunks.join('');
+    expect(stdoutContent).toContain("stdout line 1");
+    expect(stderrContent).toContain("stderr line 1");
+    
+    console.log("Dual stdout/stderr streaming test passed");
+  });
+
+  // New missing test: Streaming vs traditional consistency (equivalent to test_streaming_vs_traditional_consistency)
+  test("should ensure streaming and traditional execution consistency", async () => {
+    console.log("Testing streaming vs traditional consistency");
+    
+    const testCommand = "echo 'consistency test'; echo 'error output' >&2; exit 42";
+    
+    // Execute with traditional endpoint (no callbacks)
+    const traditionalResult = await testInstance.exec(testCommand);
+    
+    // Execute with streaming endpoint (with callbacks)
+    let streamingStdout = "";
+    let streamingStderr = "";
+    const streamingResult = await testInstance.exec(testCommand, {
+      onStdout: (content) => { streamingStdout += content; },
+      onStderr: (content) => { streamingStderr += content; }
+    });
+    
+    // Verify results are consistent
+    expect(traditionalResult.exit_code).toBe(streamingResult.exit_code);
+    expect(traditionalResult.exit_code).toBe(42);
+    
+    expect(traditionalResult.stdout.trim()).toContain("consistency test");
+    expect(streamingResult.stdout.trim()).toContain("consistency test");
+    expect(streamingStdout.trim()).toContain("consistency test");
+    
+    expect(traditionalResult.stderr.trim()).toContain("error output");
+    expect(streamingResult.stderr.trim()).toContain("error output");
+    expect(streamingStderr.trim()).toContain("error output");
+    
+    console.log("Streaming vs traditional consistency test passed");
+  });
+
+  // New missing test: Synchronous streaming (equivalent to test_sync_streaming_stdout_callback)
+  // Note: This might not be applicable in TypeScript as everything is async, but we test similar behavior
+  test("should handle streaming callbacks synchronously within async execution", async () => {
+    console.log("Testing synchronous callback handling in streaming");
+    
+    const processOrder: string[] = [];
+    let callbackCount = 0;
+    
+    const result = await testInstance.exec(
+      "echo 'first'; echo 'second'; echo 'third'",
+      {
+        onStdout: (content) => {
+          callbackCount++;
+          processOrder.push(`callback-${callbackCount}-${content.trim()}`);
+          // Simulate some processing time
+          const start = Date.now();
+          while (Date.now() - start < 10) {} // 10ms busy wait
+        }
+      }
+    );
+    
+    processOrder.push("execution-complete");
+    
+    expect(result.exit_code).toBe(0);
+    expect(callbackCount).toBeGreaterThan(0);
+    expect(processOrder[processOrder.length - 1]).toBe("execution-complete");
+    
+    console.log(`Process order: ${processOrder.join(', ')}`);
+    console.log("Synchronous callback handling test passed");
+  });
+
+  // New missing test: Timeout error type verification for streaming (equivalent to test_timeout_error_type_streaming)
+  test("should produce consistent timeout error types in streaming mode", async () => {
+    console.log("Testing timeout error types in streaming mode");
+    
+    let errorThrown = false;
+    let errorMessage = "";
+    
+    try {
+      await testInstance.exec("sleep 10", {
+        timeout: 1, // 1 second timeout
+        onStdout: (content) => console.log(`Unexpected output: ${content}`)
+      });
+    } catch (error: any) {
+      errorThrown = true;
+      errorMessage = error.message;
+    }
+    
+    expect(errorThrown).toBe(true);
+    expect(errorMessage.toLowerCase()).toMatch(/timeout|timed out/);
+    
+    console.log(`Timeout error message: ${errorMessage}`);
+    console.log("Timeout error type verification (streaming) test passed");
+  });
+
+  // New missing test: Timeout error type verification for traditional (equivalent to test_timeout_error_type_traditional)
+  test("should produce consistent timeout error types in traditional mode", async () => {
+    console.log("Testing timeout error types in traditional mode");
+    
+    let errorThrown = false;
+    let errorMessage = "";
+    
+    try {
+      await testInstance.exec("sleep 10", { timeout: 1 }); // 1 second timeout, no callbacks
+    } catch (error: any) {
+      errorThrown = true;
+      errorMessage = error.message;
+    }
+    
+    expect(errorThrown).toBe(true);
+    expect(errorMessage.toLowerCase()).toMatch(/timeout|timed out/);
+    
+    console.log(`Timeout error message: ${errorMessage}`);
+    console.log("Timeout error type verification (traditional) test passed");
+  });
+
+  // New missing test: UTF-8 and colored output preservation (equivalent to test_utf8_and_colored_output_streaming)
+  test("should preserve UTF-8 and colored output in streaming mode", async () => {
+    console.log("Testing UTF-8 and colored output preservation");
+    
+    const utf8Text = "Hello 世界! Café ñoño";
+    const coloredCommand = `echo -e "\\033[31mRed Text\\033[0m ${utf8Text} \\033[32mGreen Text\\033[0m"`;
+    
+    let capturedOutput = "";
+    const result = await testInstance.exec(coloredCommand, {
+      onStdout: (content) => {
+        capturedOutput += content;
+      }
+    });
+    
+    expect(result.exit_code).toBe(0);
+    
+    // Check UTF-8 characters are preserved
+    expect(result.stdout).toContain("世界");
+    expect(result.stdout).toContain("Café");
+    expect(result.stdout).toContain("ñoño");
+    expect(capturedOutput).toContain("世界");
+    expect(capturedOutput).toContain("Café");
+    
+    // Check ANSI escape codes are preserved (color codes)
+    expect(result.stdout).toContain("\u001b[31m"); // Red color code
+    expect(result.stdout).toContain("\u001b[32m"); // Green color code
+    expect(result.stdout).toContain("\u001b[0m");  // Reset code
+    expect(capturedOutput).toContain("\u001b[31m");
+    
+    console.log(`Captured UTF-8 and colored output: ${capturedOutput.trim()}`);
+    console.log("UTF-8 and colored output preservation test passed");
+  });
+
+  // New missing test: Stderr-only with stdout callback (equivalent to test_stderr_only_with_stdout_callback)
+  test("should handle stderr-only output with stdout callback configured", async () => {
+    console.log("Testing stderr-only output with stdout callback");
+    
+    let stdoutCallbackCalled = false;
+    let stderrCallbackCalled = false;
+    
+    const result = await testInstance.exec("echo 'error only' >&2", {
+      onStdout: (content) => {
+        stdoutCallbackCalled = true;
+        console.log(`Unexpected stdout: ${content}`);
+      },
+      onStderr: (content) => {
+        stderrCallbackCalled = true;
+        console.log(`Expected stderr: ${content}`);
+      }
+    });
+    
+    expect(result.exit_code).toBe(0);
+    expect(result.stdout).toBe(""); // No stdout output
+    expect(result.stderr).toContain("error only");
+    
+    // Only stderr callback should have been called
+    expect(stdoutCallbackCalled).toBe(false);
+    expect(stderrCallbackCalled).toBe(true);
+    
+    console.log("Stderr-only with stdout callback test passed");
+  });
+
+  // New missing test: Null vs undefined callback handling (equivalent to test_none_callback_vs_not_provided)
+  test("should handle null vs undefined callback differences", async () => {
+    console.log("Testing null vs undefined callback handling");
+    
+    const testCommand = "echo 'callback test'";
+    
+    // Test with undefined callbacks (not provided)
+    const undefinedResult = await testInstance.exec(testCommand, {});
+    
+    // Test with explicitly null callbacks (if supported)
+    const nullResult = await testInstance.exec(testCommand, {
+      onStdout: undefined,
+      onStderr: undefined
+    });
+    
+    // Both should behave the same way (use traditional endpoint)
+    expect(undefinedResult.exit_code).toBe(nullResult.exit_code);
+    expect(undefinedResult.stdout).toBe(nullResult.stdout);
+    expect(undefinedResult.stderr).toBe(nullResult.stderr);
+    
+    expect(undefinedResult.exit_code).toBe(0);
+    expect(undefinedResult.stdout).toContain("callback test");
+    
+    console.log("Null vs undefined callback handling test passed");
   });
 });

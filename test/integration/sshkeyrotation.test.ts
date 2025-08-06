@@ -203,4 +203,62 @@ describe("🔑 SSH Key Rotation Tests", () => {
     
     console.log("Raw HTTP API endpoint test passed");
   });
+
+  // New missing test: Mixed async operation consistency (equivalent to test_mixed_sync_async_operations)  
+  test("should maintain consistency across different API access patterns", async () => {
+    console.log("Testing API consistency across different access patterns");
+    
+    // Note: TypeScript SDK is purely async, but we test consistency between
+    // SDK methods and raw HTTP API calls
+    
+    // Get key via SDK method
+    console.log("Getting SSH key via SDK method");
+    const sdkKey = await testInstance.sshKey();
+    
+    // Get same key via raw HTTP API
+    console.log("Getting SSH key via raw HTTP API");
+    const baseUrl = process.env.MORPH_BASE_URL || "https://cloud.morph.so/api";
+    const headers = {
+      "Authorization": `Bearer ${process.env.MORPH_API_KEY}`,
+      "Content-Type": "application/json"
+    };
+    
+    const httpResponse = await fetch(`${baseUrl}/instance/${testInstance.id}/ssh/key`, {
+      headers
+    });
+    expect(httpResponse.ok).toBe(true);
+    const httpKey = await httpResponse.json();
+    
+    // Verify both methods return identical keys
+    expect(sdkKey.object).toBe(httpKey.object);
+    expect(sdkKey.public_key).toBe(httpKey.public_key);
+    expect(sdkKey.private_key).toBe(httpKey.private_key);
+    expect(sdkKey.password).toBe(httpKey.password);
+    
+    console.log("Both methods returned identical key data");
+    
+    // Rotate via SDK method
+    console.log("Rotating SSH key via SDK method");
+    const sdkRotatedKey = await testInstance.sshKeyRotate();
+    
+    // Get rotated key via HTTP API to verify consistency
+    console.log("Verifying rotated key via HTTP API");
+    const verifyResponse = await fetch(`${baseUrl}/instance/${testInstance.id}/ssh/key`, {
+      headers
+    });
+    expect(verifyResponse.ok).toBe(true);
+    const verifyKey = await verifyResponse.json();
+    
+    // Verify SDK rotation is reflected in HTTP API
+    expect(sdkRotatedKey.object).toBe(verifyKey.object);
+    expect(sdkRotatedKey.public_key).toBe(verifyKey.public_key);
+    expect(sdkRotatedKey.private_key).toBe(verifyKey.private_key);
+    expect(sdkRotatedKey.password).toBe(verifyKey.password);
+    
+    // Verify rotation actually changed the keys
+    expect(sdkRotatedKey.public_key).not.toBe(sdkKey.public_key);
+    expect(sdkRotatedKey.private_key).not.toBe(sdkKey.private_key);
+    
+    console.log("API consistency test passed");
+  });
 });
