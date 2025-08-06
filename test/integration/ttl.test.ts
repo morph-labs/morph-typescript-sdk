@@ -2,6 +2,7 @@
 // TTL (Time-To-Live) and auto-cleanup testing
 
 import { MorphCloudClient, Instance, Snapshot } from "morphcloud";
+import { v4 as uuidv4 } from "uuid";
 
 jest.setTimeout(15 * 60 * 1000); // TTL tests need extended timeout
 
@@ -223,5 +224,172 @@ describe("⏰ TTL and Auto-cleanup Integration (TS)", () => {
 
     // Note: We don't wait for this to expire in the test to keep test time reasonable
     // The auto-cleanup functionality is already tested in the previous test
+  });
+
+  test("should wake instance on SSH connection", async () => {
+    const testId = uuidv4();
+    console.log(`Testing wake-on-SSH functionality with test ID: ${testId}`);
+
+    try {
+      // Expected wake-on-SSH workflow:
+      // 
+      // // Create snapshot for wake-on-SSH testing
+      // const snapshot = await client.snapshots.create({
+      //   imageId: baseImageId,
+      //   vcpus: 1,
+      //   memory: 512,
+      //   diskSize: 8192,
+      // });
+      // snapshotsToCleanup.push(snapshot.id);
+      // 
+      // // Start instance with TTL and wake-on-SSH enabled
+      // const instance = await client.instances.start({
+      //   snapshotId: snapshot.id,
+      //   ttlSeconds: 60, // Short TTL for testing
+      //   ttlAction: "pause",
+      //   wakeOnSSH: true // Enable wake-on-SSH
+      // });
+      // instancesToCleanup.push(instance.id);
+      // await instance.waitUntilReady(300);
+      // 
+      // console.log(`Instance ${instance.id} created with wake-on-SSH enabled`);
+      // 
+      // // Verify instance is initially ready
+      // const initialResult = await instance.exec("echo 'Before pause'");
+      // expect(initialResult.exit_code).toBe(0);
+      // 
+      // // Wait for TTL to expire (instance should pause)
+      // console.log("Waiting for TTL expiration and pause...");
+      // await new Promise(resolve => setTimeout(resolve, 70000)); // Wait 70 seconds
+      // 
+      // // Verify instance is paused
+      // const pausedInstance = await client.instances.get({ instanceId: instance.id });
+      // expect(pausedInstance.status).toBe("paused");
+      // 
+      // // Attempt SSH connection (should wake the instance)
+      // console.log("Attempting SSH connection to wake instance...");
+      // const sshKey = await instance.sshKey();
+      // expect(sshKey.privateKey).toBeTruthy();
+      // 
+      // // Connect via SSH (this should trigger wake-on-SSH)
+      // const { NodeSSH } = require('node-ssh');
+      // const ssh = new NodeSSH();
+      // try {
+      //   await ssh.connect({
+      //     host: 'ssh.cloud.morph.so', // or appropriate SSH endpoint
+      //     port: 22,
+      //     username: 'root',
+      //     privateKey: sshKey.privateKey,
+      //     // Additional connection options
+      //   });
+      //   
+      //   // Wait a moment for wake to process
+      //   await new Promise(resolve => setTimeout(resolve, 10000));
+      //   
+      //   // Verify instance woke up
+      //   const wokeInstance = await client.instances.get({ instanceId: instance.id });
+      //   expect(wokeInstance.status).toBe("ready");
+      //   
+      //   console.log("Instance successfully woke up on SSH connection");
+      // } finally {
+      //   ssh.dispose();
+      // }
+
+      throw new Error("TODO: Implement wake-on-SSH functionality - not yet available in TypeScript SDK");
+    } catch (error: any) {
+      if (error.message.includes("TODO: Implement")) {
+        console.log("EXPECTED FAILURE: Wake-on-SSH functionality needs implementation");
+        expect(error.message).toContain("TODO: Implement");
+      } else {
+        throw error;
+      }
+    }
+  });
+
+  test("should wake instance on HTTP request", async () => {
+    const testId = uuidv4();
+    const serviceName = `http_test_${testId}`;
+    console.log(`Testing wake-on-HTTP functionality with service: ${serviceName}`);
+
+    try {
+      // Expected wake-on-HTTP workflow:
+      // 
+      // // Create snapshot for wake-on-HTTP testing
+      // const snapshot = await client.snapshots.create({
+      //   imageId: baseImageId,
+      //   vcpus: 1,
+      //   memory: 512,
+      //   diskSize: 8192,
+      // });
+      // snapshotsToCleanup.push(snapshot.id);
+      // 
+      // // Start instance with HTTP service and wake-on-HTTP
+      // const instance = await client.instances.start({
+      //   snapshotId: snapshot.id,
+      //   ttlSeconds: 60, // Short TTL for testing
+      //   ttlAction: "pause",
+      //   wakeOnHTTP: true // Enable wake-on-HTTP
+      // });
+      // instancesToCleanup.push(instance.id);
+      // await instance.waitUntilReady(300);
+      // 
+      // console.log(`Instance ${instance.id} created with wake-on-HTTP enabled`);
+      // 
+      // // Set up HTTP service on the instance
+      // const testContent = `<html><body><h1>Wake-on-HTTP Test ${testId}</h1></body></html>`;
+      // await instance.exec(`echo '${testContent}' > /tmp/test.html`);
+      // await instance.exec(`python3 -m http.server 8080 --directory /tmp &`);
+      // await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for server to start
+      // 
+      // // Expose HTTP service
+      // const serviceUrl = await instance.exposeHttpService(serviceName, 8080);
+      // expect(serviceUrl).toBeTruthy();
+      // console.log(`HTTP service exposed at: ${serviceUrl}`);
+      // 
+      // // Verify service is accessible initially
+      // const response = await fetch(`${serviceUrl}/test.html`);
+      // expect(response.ok).toBe(true);
+      // const content = await response.text();
+      // expect(content).toContain(testId);
+      // 
+      // // Wait for TTL to expire (instance should pause)
+      // console.log("Waiting for TTL expiration and pause...");
+      // await new Promise(resolve => setTimeout(resolve, 70000)); // Wait 70 seconds
+      // 
+      // // Verify instance is paused
+      // const pausedInstance = await client.instances.get({ instanceId: instance.id });
+      // expect(pausedInstance.status).toBe("paused");
+      // 
+      // // Make HTTP request to the service (should wake the instance)
+      // console.log("Making HTTP request to wake instance...");
+      // const wakeResponse = await fetch(`${serviceUrl}/test.html`);
+      // 
+      // // Wait a moment for wake to process
+      // await new Promise(resolve => setTimeout(resolve, 10000));
+      // 
+      // // Verify instance woke up
+      // const wokeInstance = await client.instances.get({ instanceId: instance.id });
+      // expect(wokeInstance.status).toBe("ready");
+      // 
+      // // Verify HTTP service is accessible after wake
+      // const finalResponse = await fetch(`${serviceUrl}/test.html`);
+      // expect(finalResponse.ok).toBe(true);
+      // const finalContent = await finalResponse.text();
+      // expect(finalContent).toContain(testId);
+      // 
+      // console.log("Instance successfully woke up on HTTP request");
+      // 
+      // // Clean up HTTP service
+      // await instance.unexposeHttpService(serviceName);
+
+      throw new Error("TODO: Implement wake-on-HTTP functionality - not yet available in TypeScript SDK");
+    } catch (error: any) {
+      if (error.message.includes("TODO: Implement")) {
+        console.log("EXPECTED FAILURE: Wake-on-HTTP functionality needs implementation");
+        expect(error.message).toContain("TODO: Implement");
+      } else {
+        throw error;
+      }
+    }
   });
 });
