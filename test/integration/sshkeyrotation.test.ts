@@ -112,8 +112,7 @@ describe("🔑 SSH Key Rotation Tests", () => {
     let ssh = await testInstance.ssh();
     try {
       const result = await ssh.execCommand("echo 'pre-rotation test'", { 
-        cwd: "/",
-        execOptions: { timeout: 10000 }
+        cwd: "/"
       });
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("pre-rotation test");
@@ -135,8 +134,7 @@ describe("🔑 SSH Key Rotation Tests", () => {
     ssh = await testInstance.ssh();
     try {
       const result = await ssh.execCommand("echo 'post-rotation test'", { 
-        cwd: "/",
-        execOptions: { timeout: 10000 }
+        cwd: "/"
       });
       expect(result.code).toBe(0);
       expect(result.stdout).toContain("post-rotation test");

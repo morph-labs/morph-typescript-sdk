@@ -79,6 +79,12 @@ interface InstanceExecResponse {
   stderr: string;
 }
 
+interface ExecOptions {
+  timeout?: number;
+  onStdout?: (content: string) => void;
+  onStderr?: (content: string) => void;
+}
+
 interface InstanceSshKey {
   /** Object type, always 'instance_ssh_key' */
   object: "instance_ssh_key";
@@ -475,14 +481,157 @@ class Instance {
     await this.refresh();
   }
 
-  async exec(command: string | string[]): Promise<InstanceExecResponse> {
+  async exec(
+    command: string | string[],
+    options?: ExecOptions
+  ): Promise<InstanceExecResponse> {
     const cmd = typeof command === "string" ? [command] : command;
-    const response = await this.client.POST(
-      `/instance/${this.id}/exec`,
-      {},
-      { command: cmd }
-    );
-    return response;
+    const { timeout, onStdout, onStderr } = options || {};
+    
+    // Smart endpoint selection: use streaming if callbacks provided
+    if (onStdout || onStderr) {
+      return await this._execStreaming(cmd, timeout, onStdout, onStderr);
+    } else {
+      return await this._execTraditional(cmd, timeout);
+    }
+  }
+
+  private async _execTraditional(
+    command: string[],
+    timeout?: number
+  ): Promise<InstanceExecResponse> {
+    try {
+      const response = await this.client.POST(
+        `/instance/${this.id}/exec`,
+        {},
+        { command },
+        { timeout }
+      );
+      return response;
+    } catch (error: any) {
+      // Convert timeout errors to more user-friendly TimeoutError
+      if (this._isTimeoutError(error)) {
+        throw new Error(`Command execution timed out after ${timeout ? (timeout / 1000) : '24 hours'} ${timeout ? (timeout / 1000 === 1 ? 'second' : 'seconds') : ''}`);
+      }
+      throw error;
+    }
+  }
+
+  private async _execStreaming(
+    command: string[],
+    timeout?: number,
+    onStdout?: (content: string) => void,
+    onStderr?: (content: string) => void
+  ): Promise<InstanceExecResponse> {
+    // Accumulate output for final response
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    let exitCode = 0;
+    
+    // Prepare headers for SSE
+    const headers = {
+      'Accept': 'text/event-stream',
+      'Content-Type': 'application/json',
+    };
+    
+    try {
+      const response = await this.client.streamPOST(
+        `/instance/${this.id}/exec/sse`,
+        headers,
+        { command },
+        { timeout }
+      );
+      
+      
+      if (!response.body) {
+        throw new Error('No response body for streaming request');
+      }
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+          
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            
+            if (!line.startsWith('data: ')) continue;
+            
+            const dataContent = line.slice(6); // Remove 'data: ' prefix
+            
+            
+            try {
+              const event = JSON.parse(dataContent);
+              const eventType = event.type;
+              const content = event.content !== undefined ? event.content : '';
+              
+              switch (eventType) {
+                case 'stdout':
+                  stdoutChunks.push(content);
+                  if (onStdout) {
+                    try {
+                      onStdout(content);
+                    } catch (e) {
+                      // Log callback errors but don't interrupt stream
+                      console.warn('Error in stdout callback:', e);
+                    }
+                  }
+                  break;
+                  
+                case 'stderr':
+                  stderrChunks.push(content);
+                  if (onStderr) {
+                    try {
+                      onStderr(content);
+                    } catch (e) {
+                      // Log callback errors but don't interrupt stream
+                      console.warn('Error in stderr callback:', e);
+                    }
+                  }
+                  break;
+                  
+                case 'exit_code':
+                  exitCode = parseInt(content);
+                  break;
+              }
+            } catch (e: any) {
+              // Skip malformed events and continue processing
+              continue;
+            }
+          }
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      
+      // If we reach here, construct response from accumulated data
+      return {
+        exit_code: exitCode,
+        stdout: stdoutChunks.join(''),
+        stderr: stderrChunks.join(''),
+      };
+    } catch (error: any) {
+      // Convert timeout errors to more user-friendly TimeoutError
+      if (this._isTimeoutError(error)) {
+        throw new Error(`Command execution timed out after ${timeout ? (timeout / 1000) : '24 hours'} ${timeout ? (timeout / 1000 === 1 ? 'second' : 'seconds') : ''}`);
+      }
+      throw error;
+    }
+  }
+  
+  private _isTimeoutError(error: any): boolean {
+    return error.name === 'AbortError' ||
+           error.code === 'TIMEOUT' ||
+           /timeout/i.test(error.message) ||
+           /timed out/i.test(error.message);
   }
 
   async waitUntilReady(timeout?: number): Promise<void> {
@@ -1061,16 +1210,18 @@ class MorphCloudClient {
     method: string,
     endpoint: string,
     query?: any,
-    data?: any
+    data?: any,
+    options?: { timeout?: number }
   ) {
     let uri = new URL(this.baseUrl + endpoint);
     if (query) {
       uri.search = new URLSearchParams(query).toString();
     }
 
-    // Use 24-hour timeout for exec commands, 10-minute for everything else
+    // Use custom timeout if provided, otherwise default behavior
     const isExecCommand = endpoint.includes('/exec');
-    const timeout = isExecCommand ? 24 * 60 * 60 * 1000 : 600000; // 24 hours vs 10 minutes
+    const defaultTimeout = isExecCommand ? 24 * 60 * 60 * 1000 : 600000; // 24 hours vs 10 minutes
+    const timeout = options?.timeout ? options.timeout * 1000 : defaultTimeout; // Convert seconds to milliseconds
     const dispatcher = isExecCommand ? execDispatcher : undefined;
 
     const fetchOptions: any = {
@@ -1119,8 +1270,61 @@ class MorphCloudClient {
     return this.request("GET", endpoint, query);
   }
 
-  async POST(endpoint: string, query?: any, data?: any) {
-    return this.request("POST", endpoint, query, data);
+  async POST(endpoint: string, query?: any, data?: any, options?: { timeout?: number }) {
+    return this.request("POST", endpoint, query, data, options);
+  }
+
+  async streamPOST(
+    endpoint: string,
+    headers?: Record<string, string>,
+    data?: any,
+    options?: { timeout?: number }
+  ): Promise<Response> {
+    let uri = new URL(this.baseUrl + endpoint);
+
+    // Use custom timeout if provided, otherwise default behavior
+    const isExecCommand = endpoint.includes('/exec');
+    const defaultTimeout = isExecCommand ? 24 * 60 * 60 * 1000 : 600000; // 24 hours vs 10 minutes
+    const timeout = options?.timeout ? options.timeout * 1000 : defaultTimeout; // Convert seconds to milliseconds
+    const dispatcher = isExecCommand ? execDispatcher : undefined;
+
+    const fetchOptions: any = {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+        ...headers, // Allow custom headers (e.g., Accept: text/event-stream)
+      },
+      body: data ? JSON.stringify(data) : undefined,
+      signal: AbortSignal.timeout(timeout),
+    };
+
+    // Add dispatcher for exec commands
+    if (dispatcher) {
+      fetchOptions.dispatcher = dispatcher;
+    }
+
+    const response = await fetch(uri, fetchOptions);
+
+    if (!response.ok) {
+      const raw = await response.text();
+      
+      let errorBody: unknown;
+      try {
+        errorBody = JSON.parse(raw);
+      } catch {
+        errorBody = raw;
+      }
+      
+      throw new Error(
+        `HTTP ${response.status} ${response.statusText} for ${response.url}\n` +
+        `Response Body: ${typeof errorBody === "string"
+           ? errorBody
+           : JSON.stringify(errorBody, null, 2)}`
+      );
+    }
+
+    return response; // Return raw Response object for streaming
   }
 
   async DELETE(endpoint: string, query?: any) {
@@ -1268,6 +1472,7 @@ export type {
   InstanceNetworking,
   InstanceRefs,
   InstanceExecResponse,
+  ExecOptions,
   InstanceSshKey,
   SyncOptions,
   SnapshotCreateOptions,

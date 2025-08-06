@@ -238,4 +238,138 @@ describe("🔄 Command Execution Integration (TS)", () => {
     expect(result.exit_code).toBe(0);
     expect(result.stdout).toContain("root");
   });
+
+  // New test for streaming with stdout callback
+  test("should support streaming execution with stdout callback", async () => {
+    console.log("Testing streaming execution with stdout callback");
+    
+    const chunks: string[] = [];
+    const result = await testInstance.exec("echo 'line1'; echo 'line2'; echo 'line3'", {
+      onStdout: (content) => {
+        chunks.push(content);
+        console.log(`Received stdout chunk: ${content.trim()}`);
+      }
+    });
+    
+    // Verify final response
+    expect(result.exit_code).toBe(0);
+    expect(result.stdout).toContain("line1");
+    expect(result.stdout).toContain("line2");
+    expect(result.stdout).toContain("line3");
+    
+    // Verify callbacks were called
+    expect(chunks.length).toBeGreaterThan(0);
+    const stdoutContent = chunks.join('');
+    expect(stdoutContent).toContain("line1");
+    
+    console.log("Streaming execution with stdout callback test passed");
+  });
+
+  // New test for streaming with stderr callback
+  test("should support streaming execution with stderr callback", async () => {
+    console.log("Testing streaming execution with stderr callback");
+    
+    const stderrChunks: string[] = [];
+    const result = await testInstance.exec("echo 'error message' >&2", {
+      onStderr: (content) => {
+        stderrChunks.push(content);
+        console.log(`Received stderr chunk: ${content.trim()}`);
+      }
+    });
+    
+    // Verify final response
+    expect(result.exit_code).toBe(0);
+    expect(result.stderr).toContain("error message");
+    
+    // Verify stderr callback was called
+    expect(stderrChunks.length).toBeGreaterThan(0);
+    const stderrContent = stderrChunks.join('');
+    expect(stderrContent).toContain("error message");
+    
+    console.log("Streaming execution with stderr callback test passed");
+  });
+
+  // New test for custom timeout (traditional endpoint)
+  test("should support custom timeout for traditional execution", async () => {
+    console.log("Testing custom timeout for traditional execution");
+    
+    // This command should timeout after 2 seconds
+    await expect(
+      testInstance.exec("sleep 5", { timeout: 2 })
+    ).rejects.toThrow(/timed out/i);
+    
+    console.log("Custom timeout for traditional execution test passed");
+  });
+
+  // New test for custom timeout (streaming endpoint)
+  test("should support custom timeout for streaming execution", async () => {
+    console.log("Testing custom timeout for streaming execution");
+    
+    const chunks: string[] = [];
+    
+    // This command should timeout after 2 seconds while using streaming
+    await expect(
+      testInstance.exec("echo 'start'; sleep 5; echo 'end'", {
+        timeout: 2,
+        onStdout: (content) => chunks.push(content)
+      })
+    ).rejects.toThrow(/timed out/i);
+    
+    // Should have received some output before timeout
+    console.log(`Received ${chunks.length} chunks before timeout: ${chunks.join('')}`);
+    // Note: May not receive chunks if timeout happens very quickly
+    
+    console.log("Custom timeout for streaming execution test passed");
+  });
+
+  // New test for callback error resilience
+  test("should handle callback errors gracefully", async () => {
+    console.log("Testing callback error resilience");
+    
+    let callbackErrorCount = 0;
+    const result = await testInstance.exec("echo 'line1'; echo 'line2'", {
+      onStdout: (content) => {
+        callbackErrorCount++;
+        if (content.includes('line1')) {
+          throw new Error("Intentional callback error");
+        }
+      }
+    });
+    
+    // Command should still complete successfully despite callback error
+    expect(result.exit_code).toBe(0);
+    expect(result.stdout).toContain("line1");
+    expect(result.stdout).toContain("line2");
+    expect(callbackErrorCount).toBeGreaterThan(0);
+    
+    console.log("Callback error resilience test passed");
+  });
+
+  // Test that traditional endpoint is used when no callbacks provided
+  test("should use traditional endpoint when no callbacks provided", async () => {
+    console.log("Testing traditional endpoint usage");
+    
+    const result = await testInstance.exec("echo 'traditional endpoint test'");
+    
+    expect(result.exit_code).toBe(0);
+    expect(result.stdout).toContain("traditional endpoint test");
+    
+    console.log("Traditional endpoint test passed");
+  });
+
+  // Test that streaming endpoint is used when callbacks provided
+  test("should use streaming endpoint when callbacks provided", async () => {
+    console.log("Testing streaming endpoint usage");
+    
+    let callbackCalled = false;
+    const result = await testInstance.exec("echo 'streaming endpoint test'", {
+      onStdout: () => { callbackCalled = true; }
+    });
+    
+    expect(result.exit_code).toBe(0);
+    expect(result.stdout).toContain("streaming endpoint test");
+    expect(callbackCalled).toBe(true);
+    
+    console.log("Streaming endpoint test passed");
+  });
 });
