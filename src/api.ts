@@ -1163,6 +1163,17 @@ class Instance {
     }
   }
 
+  async setTTL(ttlSeconds: number, ttlAction?: "stop" | "pause"): Promise<void> {
+    const action = ttlAction ?? "stop";
+    const payload = {
+      ttl_seconds: ttlSeconds,
+      ttl_action: action,
+    };
+
+    await this.client.POST(`/instance/${this.id}/ttl`, {}, payload);
+    await this.refresh();
+  }
+
   /**
    * Get the SSH key details for this instance.
    * 
