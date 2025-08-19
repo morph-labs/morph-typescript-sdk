@@ -559,9 +559,11 @@ class Instance {
       );
       return response;
     } catch (error: any) {
-      // Convert timeout errors to more user-friendly TimeoutError
+      // Convert timeout errors to more user-friendly message (timeout is in seconds)
       if (this._isTimeoutError(error)) {
-        throw new Error(`Command execution timed out after ${timeout ? (timeout / 1000) : '24 hours'} ${timeout ? (timeout / 1000 === 1 ? 'second' : 'seconds') : ''}`);
+        throw new Error(
+          `Command execution timed out after ${timeout ? timeout : '24 hours'} ${timeout ? (timeout === 1 ? 'second' : 'seconds') : ''}`
+        );
       }
       throw error;
     }
@@ -669,9 +671,11 @@ class Instance {
         stderr: stderrChunks.join(''),
       };
     } catch (error: any) {
-      // Convert timeout errors to more user-friendly TimeoutError
+      // Convert timeout errors to more user-friendly message (timeout is in seconds)
       if (this._isTimeoutError(error)) {
-        throw new Error(`Command execution timed out after ${timeout ? (timeout / 1000) : '24 hours'} ${timeout ? (timeout / 1000 === 1 ? 'second' : 'seconds') : ''}`);
+        throw new Error(
+          `Command execution timed out after ${timeout ? timeout : '24 hours'} ${timeout ? (timeout === 1 ? 'second' : 'seconds') : ''}`
+        );
       }
       throw error;
     }
