@@ -79,6 +79,17 @@ interface InstanceExecResponse {
   stderr: string;
 }
 
+interface InstanceTTL {
+  ttlSeconds?: number;
+  ttlExpireAt?: number;
+  ttlAction?: "stop" | "pause";
+}
+
+interface InstanceWakeOn {
+  wakeOnSsh?: boolean;
+  wakeOnHttp?: boolean;
+}
+
 interface ExecOptions {
   timeout?: number;
   onStdout?: (content: string) => void;
@@ -391,6 +402,8 @@ class Instance {
   readonly spec: ResourceSpec;
   readonly refs: InstanceRefs;
   networking: InstanceNetworking;
+  ttl: InstanceTTL;
+  wakeOn: InstanceWakeOn;
   readonly metadata?: Record<string, string>;
   private client: MorphCloudClient;
 
@@ -412,6 +425,15 @@ class Instance {
       internalIp: data.networking.internal_ip,
       httpServices: data.networking.http_services,
     };
+    this.ttl = {
+      ttlSeconds: data.ttl?.ttl_seconds,
+      ttlExpireAt: data.ttl?.ttl_expire_at,
+      ttlAction: data.ttl?.ttl_action,
+    };
+    this.wakeOn = {
+      wakeOnSsh: data.wake_on?.wake_on_ssh,
+      wakeOnHttp: data.wake_on?.wake_on_http,
+    };
     this.metadata = data.metadata;
     this.client = client;
   }
@@ -430,8 +452,25 @@ class Instance {
     await this.refresh();
   }
 
+  async reboot(): Promise<void> {
+    await this.client.POST(`/instance/${this.id}/reboot`);
+    await this.refresh();
+  }
+
   async setMetadata(metadata: Record<string, string>): Promise<void> {
     await this.client.POST(`/instance/${this.id}/metadata`, {}, metadata);
+    await this.refresh();
+  }
+
+  async setWakeOn(
+    wakeOnSsh?: boolean,
+    wakeOnHttp?: boolean
+  ): Promise<void> {
+    const payload: any = {};
+    if (wakeOnSsh !== undefined) payload.wake_on_ssh = wakeOnSsh;
+    if (wakeOnHttp !== undefined) payload.wake_on_http = wakeOnHttp;
+    if (Object.keys(payload).length === 0) return;
+    await this.client.POST(`/instance/${this.id}/wake-on`, {}, payload);
     await this.refresh();
   }
 
@@ -1538,4 +1577,6 @@ export type {
   InstanceSnapshotOptions,
   InstanceGetOptions,
   InstanceStopOptions,
+  InstanceTTL,
+  InstanceWakeOn,
 };
