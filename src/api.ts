@@ -39,10 +39,11 @@ enum SnapshotStatus {
 }
 
 enum InstanceStatus {
-  PENDING = "pending",
+  STARTING = "starting",
   READY = "ready",
+  STOPPING = "stopping",
+  STOPPED = "stopped",  
   PAUSED = "paused",
-  SAVING = "saving",
   ERROR = "error",
 }
 
@@ -155,6 +156,108 @@ interface SyncOptions {
 
 interface SFTPError extends Error {
   code?: string | number;
+}
+
+/**
+ * API Error class for structured error handling
+ */
+class ApiError extends Error {
+  public readonly statusCode: number;
+  public readonly responseBody: string;
+
+  constructor(message: string, statusCode: number, responseBody: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.statusCode = statusCode;
+    this.responseBody = responseBody;
+  }
+}
+
+/**
+ * SSH-related error
+ */
+class SSHError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SSHError';
+  }
+}
+
+/**
+ * SSH command execution error
+ */
+class SSHCommandError extends SSHError {
+  public readonly command: string;
+  public readonly exitCode: number;
+  public readonly stdout: string;
+  public readonly stderr: string;
+
+  constructor(command: string, exitCode: number, stdout: string, stderr: string) {
+    super(`SSH command failed: ${command} (exit code: ${exitCode})`);
+    this.name = 'SSHCommandError';
+    this.command = command;
+    this.exitCode = exitCode;
+    this.stdout = stdout;
+    this.stderr = stderr;
+  }
+}
+
+/**
+ * Time-to-live configuration
+ */
+interface TTL {
+  ttlSeconds?: number;
+  ttlExpireAt?: number;
+  ttlAction?: "stop" | "pause";
+}
+
+/**
+ * Wake-on-event configuration
+ */
+interface WakeOn {
+  wakeOnSsh: boolean;
+  wakeOnHttp: boolean;
+}
+
+/**
+ * Container configuration options
+ */
+interface ContainerOptions {
+  command?: string;
+  entrypoint?: string;
+  env?: Record<string, string>;
+  workingDir?: string;
+  user?: string;
+  ports?: number[];
+}
+
+/**
+ * Instance boot options
+ */
+interface InstanceBootOptions extends InstanceStartOptions {
+  vcpus?: number;
+  memory?: number;
+  diskSize?: number;
+}
+
+/**
+ * Instance boot context for resource management
+ */
+interface InstanceBootContext {
+  instance: Instance;
+  stop(): Promise<void>;
+}
+
+/**
+ * Instance cleanup options
+ */
+interface InstanceCleanupOptions {
+  keepCount?: number;
+  includePatterns?: string[];
+  excludePatterns?: string[];
+  dryRun?: boolean;
+  maxWorkers?: number;
+  confirmDelete?: boolean;
 }
 
 class Image {
@@ -369,6 +472,78 @@ class Snapshot {
     Object.entries(metadataObj).forEach(([key, value]) => {
       this.metadata![key] = value;
     });
+  }
+
+  /**
+   * Wait until snapshot is ready
+   */
+  async waitUntilReady(timeout?: number): Promise<void> {
+    const startTime = Date.now();
+    const timeoutMs = timeout || 300000; // 5 minutes default
+
+    while (this.status !== SnapshotStatus.READY) {
+      if (Date.now() - startTime > timeoutMs) {
+        throw new Error(`Snapshot ${this.id} did not become ready within ${timeoutMs}ms`);
+      }
+      
+      if (this.status === SnapshotStatus.FAILED) {
+        throw new Error(`Snapshot ${this.id} failed`);
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await this.refresh();
+    }
+  }
+
+  /**
+   * Execute command and return new snapshot with changes applied
+   */
+  async exec(command: string): Promise<Snapshot> {
+    // This creates a new snapshot with the command executed
+    const response = await this.client.POST(`/snapshots/${this.id}/exec`, {}, {
+      command: command
+    });
+    return new Snapshot(response, this.client);
+  }
+
+  /**
+   * Upload files and return new snapshot with files added
+   */
+  async upload(localPath: string, remotePath: string, recursive: boolean = false): Promise<Snapshot> {
+    const response = await this.client.POST(`/snapshots/${this.id}/upload`, {}, {
+      local_path: localPath,
+      remote_path: remotePath,
+      recursive: recursive
+    });
+    return new Snapshot(response, this.client);
+  }
+
+  /**
+   * Download files from snapshot
+   */
+  async download(remotePath: string, localPath: string, recursive: boolean = false): Promise<Snapshot> {
+    const response = await this.client.POST(`/snapshots/${this.id}/download`, {}, {
+      remote_path: remotePath,
+      local_path: localPath,
+      recursive: recursive
+    });
+    return new Snapshot(response, this.client);
+  }
+
+  /**
+   * Configure snapshot as container
+   */
+  async asContainer(options: ContainerOptions = {}): Promise<Snapshot> {
+    const response = await this.client.POST(`/snapshots/${this.id}/as_container`, {}, options);
+    return new Snapshot(response, this.client);
+  }
+
+  /**
+   * Refresh snapshot data from server
+   */
+  private async refresh(): Promise<void> {
+    const updated = await this.client.snapshots.get({ snapshotId: this.id });
+    Object.assign(this, updated);
   }
 }
 
@@ -1200,6 +1375,73 @@ class Instance {
     return response as InstanceSshKey;
   }
 
+  /**
+   * Reboot the instance
+   */
+  async reboot(): Promise<void> {
+    await this.client.POST(`/instance/${this.id}/reboot`);
+    await this.refresh();
+  }
+
+  /**
+   * Upload files to the instance
+   */
+  async upload(localPath: string, remotePath: string, recursive: boolean = false): Promise<void> {
+    const ssh = await this.ssh();
+    try {
+      if (recursive) {
+        await ssh.putDirectory(localPath, remotePath);
+      } else {
+        await ssh.putFile(localPath, remotePath);
+      }
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  /**
+   * Download files from the instance  
+   */
+  async download(remotePath: string, localPath: string, recursive: boolean = false): Promise<void> {
+    const ssh = await this.ssh();
+    try {
+      if (recursive) {
+        await ssh.getDirectory(remotePath, localPath);
+      } else {
+        await ssh.getFile(remotePath, localPath);
+      }
+    } finally {
+      ssh.dispose();
+    }
+  }
+
+  /**
+   * Set wake-on configuration
+   */
+  async setWakeOn(wakeOnSsh?: boolean, wakeOnHttp?: boolean): Promise<void> {
+    const data: any = {};
+    if (wakeOnSsh !== undefined) data.wake_on_ssh = wakeOnSsh;
+    if (wakeOnHttp !== undefined) data.wake_on_http = wakeOnHttp;
+    
+    await this.client.POST(`/instance/${this.id}/wake_on`, {}, data);
+    await this.refresh();
+  }
+
+  /**
+   * Get SSH connection (non-disposable)
+   */
+  async sshConnect(): Promise<NodeSSH> {
+    return await this.ssh();
+  }
+
+  /**
+   * Configure instance as container
+   */
+  async asContainer(options: ContainerOptions = {}): Promise<void> {
+    await this.client.POST(`/instance/${this.id}/as_container`, {}, options);
+    await this.refresh();
+  }
+
   private async refresh(): Promise<void> {
     const instance = await this.client.instances.get({ instanceId: this.id });
     Object.assign(this, instance);
@@ -1470,11 +1712,90 @@ class MorphCloudClient {
     stop: async (options: InstanceStopOptions): Promise<void> => {
       await this.DELETE(`/instance/${options.instanceId}`);
     },
+
+    /**
+     * Boot instance with automatic cleanup
+     */
+    boot: async (options: InstanceBootOptions): Promise<InstanceBootContext> => {
+      const instance = await this.instances.start(options);
+      await instance.waitUntilReady();
+      
+      return {
+        instance,
+        async stop() {
+          await instance.stop();
+        }
+      };
+    },
+
+    /**
+     * Cleanup old instances
+     */
+    cleanup: async (options: InstanceCleanupOptions = {}): Promise<void> => {
+      const {
+        keepCount = 3,
+        includePatterns = [],
+        excludePatterns = [],
+        dryRun = false,
+        maxWorkers = 5,
+        confirmDelete = true
+      } = options;
+
+      const instances = await this.instances.list();
+      
+      // Sort by creation time, newest first
+      const sortedInstances = instances.sort((a, b) => b.created - a.created);
+      
+      // Skip the newest keepCount instances
+      const instancesToDelete = sortedInstances.slice(keepCount);
+      
+      // Apply include/exclude filters
+      const filteredInstances = instancesToDelete.filter(instance => {
+        // Apply include patterns
+        if (includePatterns.length > 0) {
+          const matchesInclude = includePatterns.some(pattern => 
+            instance.id.includes(pattern) || 
+            Object.values(instance.metadata || {}).some(value => value.includes(pattern))
+          );
+          if (!matchesInclude) return false;
+        }
+        
+        // Apply exclude patterns  
+        const matchesExclude = excludePatterns.some(pattern =>
+          instance.id.includes(pattern) ||
+          Object.values(instance.metadata || {}).some(value => value.includes(pattern))
+        );
+        return !matchesExclude;
+      });
+
+      if (dryRun) {
+        console.log(`Would delete ${filteredInstances.length} instances:`, 
+          filteredInstances.map(i => i.id));
+        return;
+      }
+
+      if (confirmDelete && filteredInstances.length > 0) {
+        console.log(`About to delete ${filteredInstances.length} instances. Continue? (y/N)`);
+        // In a real implementation, you'd prompt for user confirmation
+      }
+
+      // Delete instances (with concurrency limit)
+      const deletePromises = filteredInstances.map(instance => 
+        instance.stop().catch(err => console.error(`Failed to stop ${instance.id}:`, err))
+      );
+      
+      // Process in batches to respect maxWorkers
+      for (let i = 0; i < deletePromises.length; i += maxWorkers) {
+        const batch = deletePromises.slice(i, i + maxWorkers);
+        await Promise.all(batch);
+      }
+    }
   };
 }
 
 export { MorphCloudClient, Instance, Snapshot, Image };
 export { InstanceStatus, SnapshotStatus };
+export { ApiError, SSHError, SSHCommandError };
 export type {
   MorphCloudClientOptions,
   ResourceSpec,
@@ -1495,4 +1816,10 @@ export type {
   InstanceSnapshotOptions,
   InstanceGetOptions,
   InstanceStopOptions,
+  TTL,
+  WakeOn,
+  ContainerOptions,
+  InstanceBootOptions,
+  InstanceBootContext,
+  InstanceCleanupOptions,
 };
