@@ -16,6 +16,6 @@ export default defineConfig({
   platform: "node",
   target: "node14",
   // Handle the 'ignore' package properly for both formats
-  external: [],
+  external: ["playwright", "playwright-core"],
   noExternal: ["ignore"]
 });
