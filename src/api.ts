@@ -15,7 +15,7 @@ const MORPH_SSH_PORT = 22;
 // Long operation dispatcher for exec commands (24 hour timeout)
 const execDispatcher = new Agent({
   headersTimeout: 24 * 60 * 60 * 1000, // 24 hours
-  bodyTimeout: 0                        // No body timeout
+  bodyTimeout: 0, // No body timeout
 });
 
 const SSH_TEMP_KEYPAIR = generateKeyPairSync("rsa", {
@@ -250,7 +250,7 @@ class Snapshot {
    */
   static computeChainHash(
     parentChainHash: string,
-    effectIdentifier: string
+    effectIdentifier: string,
   ): string {
     const hasher = crypto.createHash("sha256");
     hasher.update(parentChainHash);
@@ -270,7 +270,7 @@ class Snapshot {
     instance: Instance,
     command: string,
     background: boolean = false,
-    getPty: boolean = true
+    getPty: boolean = true,
   ): Promise<void> {
     const ssh = await instance.ssh();
 
@@ -323,7 +323,7 @@ class Snapshot {
 
     const newChainHash = Snapshot.computeChainHash(
       parentChainHash,
-      effectIdentifier
+      effectIdentifier,
     );
 
     const candidates = await this.client.snapshots.list({
@@ -369,7 +369,7 @@ class Snapshot {
       },
       command,
       false,
-      true
+      true,
     );
   }
 
@@ -462,10 +462,7 @@ class Instance {
     await this.refresh();
   }
 
-  async setWakeOn(
-    wakeOnSsh?: boolean,
-    wakeOnHttp?: boolean
-  ): Promise<void> {
+  async setWakeOn(wakeOnSsh?: boolean, wakeOnHttp?: boolean): Promise<void> {
     const payload: any = {};
     if (wakeOnSsh !== undefined) payload.wake_on_ssh = wakeOnSsh;
     if (wakeOnHttp !== undefined) payload.wake_on_http = wakeOnHttp;
@@ -481,7 +478,7 @@ class Instance {
     const response = await this.client.POST(
       `/instance/${this.id}/snapshot`,
       { digest },
-      { metadata }
+      { metadata },
     );
 
     return new Snapshot(response, this.client);
@@ -494,11 +491,11 @@ class Instance {
     const response = await this.client.POST(
       `/instance/${this.id}/branch`,
       { count },
-      {}
+      {},
     );
     const snapshot = new Snapshot(response.snapshot, this.client);
     const instances = response.instances.map(
-      (i: any) => new Instance(i, this.client)
+      (i: any) => new Instance(i, this.client),
     );
     return { snapshot, instances };
   }
@@ -506,7 +503,7 @@ class Instance {
   async exposeHttpService(
     name: string,
     port: number,
-    auth_mode?: string
+    auth_mode?: string,
   ): Promise<InstanceHttpService> {
     const payload: any = { name, port };
     if (auth_mode !== undefined) {
@@ -517,7 +514,7 @@ class Instance {
     await this.refresh();
 
     let service = this.networking.httpServices.find(
-      (service) => service.name === name
+      (service) => service.name === name,
     );
     if (service === undefined) {
       throw new Error("Failed to expose HTTP service");
@@ -533,11 +530,11 @@ class Instance {
 
   async exec(
     command: string | string[],
-    options?: ExecOptions
+    options?: ExecOptions,
   ): Promise<InstanceExecResponse> {
     const cmd = typeof command === "string" ? [command] : command;
     const { timeout, onStdout, onStderr } = options || {};
-    
+
     // Smart endpoint selection: use streaming if callbacks provided
     if (onStdout || onStderr) {
       return await this._execStreaming(cmd, timeout, onStdout, onStderr);
@@ -548,21 +545,21 @@ class Instance {
 
   private async _execTraditional(
     command: string[],
-    timeout?: number
+    timeout?: number,
   ): Promise<InstanceExecResponse> {
     try {
       const response = await this.client.POST(
         `/instance/${this.id}/exec`,
         {},
         { command },
-        { timeout }
+        { timeout },
       );
       return response;
     } catch (error: any) {
       // Convert timeout errors to more user-friendly message (timeout is in seconds)
       if (this._isTimeoutError(error)) {
         throw new Error(
-          `Command execution timed out after ${timeout ? timeout : '24 hours'} ${timeout ? (timeout === 1 ? 'second' : 'seconds') : ''}`
+          `Command execution timed out after ${timeout ? timeout : "24 hours"} ${timeout ? (timeout === 1 ? "second" : "seconds") : ""}`,
         );
       }
       throw error;
@@ -573,84 +570,82 @@ class Instance {
     command: string[],
     timeout?: number,
     onStdout?: (content: string) => void,
-    onStderr?: (content: string) => void
+    onStderr?: (content: string) => void,
   ): Promise<InstanceExecResponse> {
     // Accumulate output for final response
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];
     let exitCode = 0;
-    
+
     // Prepare headers for SSE
     const headers = {
-      'Accept': 'text/event-stream',
-      'Content-Type': 'application/json',
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
     };
-    
+
     try {
       const response = await this.client.streamPOST(
         `/instance/${this.id}/exec/sse`,
         headers,
         { command },
-        { timeout }
+        { timeout },
       );
-      
-      
+
       if (!response.body) {
-        throw new Error('No response body for streaming request');
+        throw new Error("No response body for streaming request");
       }
-      
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = '';
-      
+      let buffer = "";
+
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          
+
           buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
-          
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
           for (const line of lines) {
             if (!line.trim()) continue;
-            
-            if (!line.startsWith('data: ')) continue;
-            
+
+            if (!line.startsWith("data: ")) continue;
+
             const dataContent = line.slice(6); // Remove 'data: ' prefix
-            
-            
+
             try {
               const event = JSON.parse(dataContent);
               const eventType = event.type;
-              const content = event.content !== undefined ? event.content : '';
-              
+              const content = event.content !== undefined ? event.content : "";
+
               switch (eventType) {
-                case 'stdout':
+                case "stdout":
                   stdoutChunks.push(content);
                   if (onStdout) {
                     try {
                       onStdout(content);
                     } catch (e) {
                       // Log callback errors but don't interrupt stream
-                      console.warn('Error in stdout callback:', e);
+                      console.warn("Error in stdout callback:", e);
                     }
                   }
                   break;
-                  
-                case 'stderr':
+
+                case "stderr":
                   stderrChunks.push(content);
                   if (onStderr) {
                     try {
                       onStderr(content);
                     } catch (e) {
                       // Log callback errors but don't interrupt stream
-                      console.warn('Error in stderr callback:', e);
+                      console.warn("Error in stderr callback:", e);
                     }
                   }
                   break;
-                  
-                case 'exit_code':
+
+                case "exit_code":
                   exitCode = parseInt(content);
                   break;
               }
@@ -663,29 +658,31 @@ class Instance {
       } finally {
         reader.releaseLock();
       }
-      
+
       // If we reach here, construct response from accumulated data
       return {
         exit_code: exitCode,
-        stdout: stdoutChunks.join(''),
-        stderr: stderrChunks.join(''),
+        stdout: stdoutChunks.join(""),
+        stderr: stderrChunks.join(""),
       };
     } catch (error: any) {
       // Convert timeout errors to more user-friendly message (timeout is in seconds)
       if (this._isTimeoutError(error)) {
         throw new Error(
-          `Command execution timed out after ${timeout ? timeout : '24 hours'} ${timeout ? (timeout === 1 ? 'second' : 'seconds') : ''}`
+          `Command execution timed out after ${timeout ? timeout : "24 hours"} ${timeout ? (timeout === 1 ? "second" : "seconds") : ""}`,
         );
       }
       throw error;
     }
   }
-  
+
   private _isTimeoutError(error: any): boolean {
-    return error.name === 'AbortError' ||
-           error.code === 'TIMEOUT' ||
-           /timeout/i.test(error.message) ||
-           /timed out/i.test(error.message);
+    return (
+      error.name === "AbortError" ||
+      error.code === "TIMEOUT" ||
+      /timeout/i.test(error.message) ||
+      /timed out/i.test(error.message)
+    );
   }
 
   async waitUntilReady(timeout?: number): Promise<void> {
@@ -719,9 +716,8 @@ class Instance {
   async sync(
     source: string,
     dest: string,
-    options: SyncOptions = {}
+    options: SyncOptions = {},
   ): Promise<void> {
-
     const fs = await import("fs/promises");
     const path = await import("path");
 
@@ -744,7 +740,7 @@ class Instance {
     const shouldIgnore = (
       filePath: string,
       baseDir: string,
-      ignoreRule: any
+      ignoreRule: any,
     ): boolean => {
       if (!ignoreRule) return false;
       const relativePath = path.relative(baseDir, filePath);
@@ -782,7 +778,7 @@ class Instance {
       (!sourceInstance && !destInstance)
     ) {
       throw new Error(
-        "One (and only one) path must be a remote path in the format instance_id:/path"
+        "One (and only one) path must be a remote path in the format instance_id:/path",
       );
     }
 
@@ -790,7 +786,7 @@ class Instance {
     const instanceId = sourceInstance || destInstance;
     if (instanceId !== this.id) {
       throw new Error(
-        `Instance ID in path (${instanceId}) doesn't match this instance (${this.id})`
+        `Instance ID in path (${instanceId}) doesn't match this instance (${this.id})`,
       );
     }
 
@@ -799,7 +795,7 @@ class Instance {
       "info",
       options.dryRun
         ? "[DRY RUN] "
-        : "" + `Syncing ${sourceInstance ? "from" : "to"} remote...`
+        : "" + `Syncing ${sourceInstance ? "from" : "to"} remote...`,
     );
 
     // Connect SSH
@@ -868,7 +864,7 @@ class Instance {
 
     try {
       const getRemoteFiles = async (
-        dir: string
+        dir: string,
       ): Promise<Map<string, FileInfo>> => {
         const files = new Map<string, FileInfo>();
 
@@ -900,7 +896,7 @@ class Instance {
 
       // Update getLocalFiles to use gitignore
       const getLocalFiles = async (
-        dir: string
+        dir: string,
       ): Promise<Map<string, FileInfo>> => {
         const fs = (await import("fs/promises")) as FSPromisesModule;
         const path = (await import("path")) as PathModule;
@@ -1041,12 +1037,12 @@ class Instance {
         log("info", "\nChanges to be made:");
         log(
           "info",
-          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`
+          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`,
         );
         if (options.delete) {
           log(
             "info",
-            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`
+            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`,
           );
         }
 
@@ -1061,7 +1057,7 @@ class Instance {
             if (change.type === "copy") {
               log(
                 "info",
-                `  Would copy: ${change.dest} (${formatSize(change.size!)})`
+                `  Would copy: ${change.dest} (${formatSize(change.size!)})`,
               );
             } else {
               log("info", `  Would delete: ${change.dest}`);
@@ -1086,7 +1082,7 @@ class Instance {
               await promisifiedSftp.utimes(
                 change.dest,
                 stat.mtimeMs / 1000,
-                stat.mtimeMs / 1000
+                stat.mtimeMs / 1000,
               );
             } else {
               log("info", `Deleting ${change.dest}`);
@@ -1096,7 +1092,7 @@ class Instance {
             const sftpError = error as SFTPError;
             log(
               "error",
-              `Error processing ${change.dest}: ${sftpError.message} (code: ${sftpError.code})`
+              `Error processing ${change.dest}: ${sftpError.message} (code: ${sftpError.code})`,
             );
             throw error;
           }
@@ -1155,12 +1151,12 @@ class Instance {
         log("info", "\nChanges to be made:");
         log(
           "info",
-          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`
+          `  Copy: ${changes.filter((c) => c.type === "copy").length} files (${formatSize(changes.reduce((sum, c) => sum + (c.size || 0), 0))})`,
         );
         if (options.delete) {
           log(
             "info",
-            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`
+            `  Delete: ${changes.filter((c) => c.type === "delete").length} files`,
           );
         }
 
@@ -1175,7 +1171,7 @@ class Instance {
             if (change.type === "copy") {
               log(
                 "info",
-                `  Would copy: ${change.dest} (${formatSize(change.size!)})`
+                `  Would copy: ${change.dest} (${formatSize(change.size!)})`,
               );
             } else {
               log("info", `  Would delete: ${change.dest}`);
@@ -1219,7 +1215,10 @@ class Instance {
     }
   }
 
-  async setTTL(ttlSeconds: number, ttlAction?: "stop" | "pause"): Promise<void> {
+  async setTTL(
+    ttlSeconds: number,
+    ttlAction?: "stop" | "pause",
+  ): Promise<void> {
     const action = ttlAction ?? "stop";
     const payload = {
       ttl_seconds: ttlSeconds,
@@ -1232,10 +1231,10 @@ class Instance {
 
   /**
    * Get the SSH key details for this instance.
-   * 
+   *
    * Returns the current SSH key information including private key, public key, and password
    * that can be used to establish SSH connections to the instance.
-   * 
+   *
    * @returns Promise resolving to SSH key details
    */
   async sshKey(): Promise<InstanceSshKey> {
@@ -1245,10 +1244,10 @@ class Instance {
 
   /**
    * Rotate (regenerate) the SSH key for this instance.
-   * 
+   *
    * This generates a new ephemeral SSH key for establishing connections.
    * The old SSH key will be invalidated and replaced with the new one.
-   * 
+   *
    * @returns Promise resolving to new SSH key details
    */
   async sshKeyRotate(): Promise<InstanceSshKey> {
@@ -1278,7 +1277,7 @@ class MorphCloudClient {
     endpoint: string,
     query?: any,
     data?: any,
-    options?: { timeout?: number }
+    options?: { timeout?: number },
   ) {
     let uri = new URL(this.baseUrl + endpoint);
     if (query) {
@@ -1286,7 +1285,7 @@ class MorphCloudClient {
     }
 
     // Use custom timeout if provided, otherwise default behavior
-    const isExecCommand = endpoint.includes('/exec');
+    const isExecCommand = endpoint.includes("/exec");
     const defaultTimeout = isExecCommand ? 24 * 60 * 60 * 1000 : 600000; // 24 hours vs 10 minutes
     const timeout = options?.timeout ? options.timeout * 1000 : defaultTimeout; // Convert seconds to milliseconds
     const dispatcher = isExecCommand ? execDispatcher : undefined;
@@ -1311,19 +1310,21 @@ class MorphCloudClient {
 
     if (!response.ok) {
       const raw = await response.text();
-      
+
       let errorBody: unknown;
       try {
         errorBody = JSON.parse(raw);
       } catch {
         errorBody = raw;
       }
-      
+
       throw new Error(
         `HTTP ${response.status} ${response.statusText} for ${response.url}\n` +
-        `Response Body: ${typeof errorBody === "string"
-           ? errorBody
-           : JSON.stringify(errorBody, null, 2)}`
+          `Response Body: ${
+            typeof errorBody === "string"
+              ? errorBody
+              : JSON.stringify(errorBody, null, 2)
+          }`,
       );
     }
     try {
@@ -1337,7 +1338,12 @@ class MorphCloudClient {
     return this.request("GET", endpoint, query);
   }
 
-  async POST(endpoint: string, query?: any, data?: any, options?: { timeout?: number }) {
+  async POST(
+    endpoint: string,
+    query?: any,
+    data?: any,
+    options?: { timeout?: number },
+  ) {
     return this.request("POST", endpoint, query, data, options);
   }
 
@@ -1345,21 +1351,21 @@ class MorphCloudClient {
     endpoint: string,
     headers?: Record<string, string>,
     data?: any,
-    options?: { timeout?: number }
+    options?: { timeout?: number },
   ): Promise<Response> {
     let uri = new URL(this.baseUrl + endpoint);
 
     // Use custom timeout if provided, otherwise default behavior
-    const isExecCommand = endpoint.includes('/exec');
+    const isExecCommand = endpoint.includes("/exec");
     const defaultTimeout = isExecCommand ? 24 * 60 * 60 * 1000 : 600000; // 24 hours vs 10 minutes
     const timeout = options?.timeout ? options.timeout * 1000 : defaultTimeout; // Convert seconds to milliseconds
     const dispatcher = isExecCommand ? execDispatcher : undefined;
 
     const fetchOptions: any = {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
         ...headers, // Allow custom headers (e.g., Accept: text/event-stream)
       },
       body: data ? JSON.stringify(data) : undefined,
@@ -1375,19 +1381,21 @@ class MorphCloudClient {
 
     if (!response.ok) {
       const raw = await response.text();
-      
+
       let errorBody: unknown;
       try {
         errorBody = JSON.parse(raw);
       } catch {
         errorBody = raw;
       }
-      
+
       throw new Error(
         `HTTP ${response.status} ${response.statusText} for ${response.url}\n` +
-        `Response Body: ${typeof errorBody === "string"
-           ? errorBody
-           : JSON.stringify(errorBody, null, 2)}`
+          `Response Body: ${
+            typeof errorBody === "string"
+              ? errorBody
+              : JSON.stringify(errorBody, null, 2)
+          }`,
       );
     }
 
@@ -1525,7 +1533,10 @@ class MorphCloudClient {
           await instance.stop();
         } catch (cleanupError) {
           // Log cleanup error and rethrow original
-          console.error(`Failed to cleanup instance ${instance.id}:`, cleanupError);
+          console.error(
+            `Failed to cleanup instance ${instance.id}:`,
+            cleanupError,
+          );
         }
         throw e;
       }
@@ -1533,7 +1544,15 @@ class MorphCloudClient {
     },
 
     boot: async (options: InstanceBootOptions): Promise<Instance> => {
-      const { snapshotId, vcpus, memory, diskSize, metadata, ttlSeconds, ttlAction } = options;
+      const {
+        snapshotId,
+        vcpus,
+        memory,
+        diskSize,
+        metadata,
+        ttlSeconds,
+        ttlAction,
+      } = options;
 
       const body: any = {};
       if (vcpus !== undefined) body.vcpus = vcpus;
@@ -1543,7 +1562,11 @@ class MorphCloudClient {
       if (ttlSeconds !== undefined) body.ttl_seconds = ttlSeconds;
       if (ttlAction !== undefined) body.ttl_action = ttlAction;
 
-      const response = await this.POST(`/snapshot/${snapshotId}/boot`, {}, body);
+      const response = await this.POST(
+        `/snapshot/${snapshotId}/boot`,
+        {},
+        body,
+      );
       return new Instance(response, this);
     },
 
