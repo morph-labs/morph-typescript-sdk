@@ -1270,7 +1270,97 @@ class MorphCloudClient {
     this.apiKey = options.apiKey || process.env.MORPH_API_KEY || "";
     this.baseUrl = options.baseUrl || MORPH_BASE_URL;
     this.verbose = options.verbose || false;
+
+    // Load SDK plugins after initialization
+    this._loadSDKPlugins();
   }
+
+  /**
+   * Load SDK plugins from installed packages.
+   * Discovers packages that declare themselves as morphcloud plugins
+   * via package.json metadata and loads their plugin functions.
+   */
+  private _loadSDKPlugins(): void {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      
+      // Find the nearest package.json (starting from cwd)
+      const packageJsonPath = this._findPackageJson();
+      if (!packageJsonPath) return;
+      
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+      const allDeps = {
+        ...packageJson.dependencies,
+        ...packageJson.devDependencies,
+        ...packageJson.peerDependencies
+      };
+
+      // Look for packages that declare themselves as morphcloud plugins
+      for (const [depName] of Object.entries(allDeps)) {
+        try {
+          // Try to resolve the package's package.json
+          const depPackageJsonPath = require.resolve(`${depName}/package.json`);
+          const depPackageJson = JSON.parse(fs.readFileSync(depPackageJsonPath, 'utf8'));
+          
+          // Check if this package declares itself as a morphcloud plugin
+          if (depPackageJson.morphcloud?.plugin) {
+            const loaderPath = depPackageJson.morphcloud.loader || depPackageJson.main || './index.js';
+            
+            // Resolve the loader module
+            const loaderModulePath = require.resolve(`${depName}/${loaderPath}`);
+            const pluginLoader = require(loaderModulePath);
+            
+            // Call the plugin loader function
+            if (typeof pluginLoader === 'function') {
+              pluginLoader(this);
+            } else if (pluginLoader.default && typeof pluginLoader.default === 'function') {
+              pluginLoader.default(this);
+            } else if (pluginLoader.morphcloudPlugin && typeof pluginLoader.morphcloudPlugin === 'function') {
+              pluginLoader.morphcloudPlugin(this);
+            }
+            
+            if (this.verbose) {
+              console.log(`Loaded morphcloud plugin: ${depName}`);
+            }
+          }
+        } catch (error) {
+          // Silently skip plugins that fail to load
+          if (this.verbose) {
+            console.warn(`Failed to load plugin ${depName}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      // Silently fail like the Python version
+      if (this.verbose) {
+        console.warn('Failed to load SDK plugins:', error);
+      }
+    }
+  }
+
+  /**
+   * Find the nearest package.json file starting from the current working directory
+   */
+  private _findPackageJson(): string | null {
+    const fs = require('fs');
+    const path = require('path');
+    
+    let currentDir = process.cwd();
+    
+    while (currentDir !== path.dirname(currentDir)) { // Stop at filesystem root
+      const packageJsonPath = path.join(currentDir, 'package.json');
+      try {
+        fs.accessSync(packageJsonPath, fs.constants.F_OK);
+        return packageJsonPath;
+      } catch {
+        currentDir = path.dirname(currentDir);
+      }
+    }
+    
+    return null;
+  }
+
 
   private async request(
     method: string,
