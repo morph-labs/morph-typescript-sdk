@@ -56,6 +56,11 @@ interface SnapshotRefs {
   imageId: string;
 }
 
+interface SnapshotTTL {
+  ttlSeconds: number | null;
+  ttlExpireAt: number | null;
+}
+
 interface InstanceHttpService {
   name: string;
   port: number;
@@ -125,6 +130,7 @@ interface SnapshotCreateOptions {
   vcpus?: number;
   memory?: number;
   diskSize?: number;
+  ttlSeconds?: number;
   digest?: string;
   metadata?: Record<string, string>;
 }
@@ -148,6 +154,7 @@ interface InstanceStartOptions {
 interface InstanceSnapshotOptions {
   digest?: string;
   metadata?: Record<string, string>;
+  ttlSeconds?: number;
 }
 
 interface InstanceGetOptions {
@@ -208,6 +215,7 @@ class Snapshot {
   readonly refs: SnapshotRefs;
   readonly digest?: string;
   metadata?: Record<string, string>;
+  ttl: SnapshotTTL;
   private client: MorphCloudClient;
 
   constructor(data: any, client: MorphCloudClient) {
@@ -230,6 +238,11 @@ class Snapshot {
     } else {
       this.metadata = {};
     }
+
+    this.ttl = {
+      ttlSeconds: data.ttl?.ttl_seconds ?? null,
+      ttlExpireAt: data.ttl?.ttl_expire_at ?? null,
+    };
 
     this.client = client;
   }
@@ -392,6 +405,21 @@ class Snapshot {
       this.metadata![key] = value;
     });
   }
+
+  async setTTL(ttlSeconds: number | null): Promise<Snapshot> {
+    const response = await this.client.POST(
+      `/snapshot/${this.id}/ttl`,
+      {},
+      { ttl_seconds: ttlSeconds },
+    );
+    const updated = new Snapshot(response, this.client);
+    this.ttl = updated.ttl;
+    return updated;
+  }
+
+  async clearTTL(): Promise<Snapshot> {
+    return this.setTTL(null);
+  }
 }
 
 class Instance {
@@ -475,10 +503,15 @@ class Instance {
     const digest = options.digest || undefined;
     const metadata = options.metadata || {};
 
+    const payload: any = { metadata };
+    if (options.ttlSeconds !== undefined) {
+      payload.ttl_seconds = options.ttlSeconds;
+    }
+
     const response = await this.client.POST(
       `/instance/${this.id}/snapshot`,
       { digest },
-      { metadata },
+      payload,
     );
 
     return new Snapshot(response, this.client);
@@ -1560,6 +1593,7 @@ class MorphCloudClient {
         vcpus: options.vcpus,
         memory: options.memory,
         disk_size: options.diskSize,
+        ttl_seconds: options.ttlSeconds,
         digest: options.digest,
         readiness_check: { type: "timeout", timeout: 10.0 },
         metadata: metadata || {},
@@ -1677,6 +1711,7 @@ export type {
   MorphCloudClientOptions,
   ResourceSpec,
   SnapshotRefs,
+  SnapshotTTL,
   InstanceHttpService,
   InstanceNetworking,
   InstanceRefs,
